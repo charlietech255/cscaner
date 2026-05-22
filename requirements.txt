@@ -1,0 +1,10 @@
+requests
+colorama
+paramiko
+python-whois
+python-nmap
+beautifulsoup4
+
+# Note: No external crypto library needed
+# crypto_utils.py uses Python stdlib (hashlib, hmac, base64) only
+# This keeps CSCAN lightweight and Termux-compatible
