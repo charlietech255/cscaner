@@ -78,6 +78,48 @@ By default, CSCAN uses wordlists from the `wordlists/` folder. You can modify, u
 
 ---
 
+## Keeping CSCAN Updated
+
+### Update Without Recloning
+
+You don't need to delete and re-clone the repository to get updates. Simply pull the latest changes:
+
+```bash
+cd cscaner
+git pull origin main
+```
+
+This will download and merge all new features, bug fixes, and security patches without losing your local wordlists or configurations.
+
+### Check for Available Updates
+
+Before pulling, see what's new:
+
+```bash
+git fetch origin
+git log --oneline HEAD..origin/main
+```
+
+This shows you what commits are waiting to be pulled from the main repository.
+
+### Revert to a Previous Version (if needed)
+
+If an update breaks something, you can revert to a previous version:
+
+```bash
+git log --oneline -10          # View recent commits
+git checkout <commit-hash>     # Go back to a specific commit
+```
+
+Or return to the latest version:
+
+```bash
+git checkout main
+git pull origin main
+```
+
+---
+
 ## Stealth Mode & WAF Evasion
 
 CSCAN has a proper **Stealth & OPSEC** engine built in to reduce your detection footprint and get past basic WAF rules.
