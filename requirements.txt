@@ -1,9 +1,11 @@
 requests
 colorama
-paramiko
 python-whois
-python-nmap
 beautifulsoup4
+python-nmap
+
+# Optional dependencies:
+# - paramiko: Required for SSH auditing (not available on Termux due to cryptography build requirements)
 
 # Note: No external crypto library needed
 # crypto_utils.py uses Python stdlib (hashlib, hmac, base64) only

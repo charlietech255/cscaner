@@ -66,11 +66,16 @@ fi
 # ── Install Python Dependencies ────────────────────────────────────────────────
 echo -e "${BLUE}[*] Installing Python dependencies...${RESET}"
 
-PACKAGES="requests colorama paramiko python-whois beautifulsoup4"
+PACKAGES="requests colorama python-whois beautifulsoup4"
 
 # Add python-nmap only if not Termux (optional on Termux)
 if [ $IS_TERMUX -eq 0 ]; then
     PACKAGES="$PACKAGES python-nmap"
+fi
+
+# Add paramiko only if not Termux (requires Rust for cryptography compilation)
+if [ $IS_TERMUX -eq 0 ]; then
+    PACKAGES="$PACKAGES paramiko"
 fi
 
 pip install --upgrade pip setuptools 2>&1 | grep -E "(Successfully|already)" || true
@@ -88,7 +93,7 @@ done
 echo -e "${BLUE}[*] Verifying installation...${RESET}"
 
 missing=0
-for pkg in requests colorama paramiko; do
+for pkg in requests colorama; do
     python3 -c "import $(echo $pkg | sed 's/-/_/g')" 2>/dev/null
     if [ $? -eq 0 ]; then
         echo -e "  ${GREEN}[OK]${RESET} $pkg"
@@ -97,6 +102,19 @@ for pkg in requests colorama paramiko; do
         missing=$((missing + 1))
     fi
 done
+
+# Check paramiko only on non-Termux systems
+if [ $IS_TERMUX -eq 0 ]; then
+    python3 -c "import paramiko" 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo -e "  ${GREEN}[OK]${RESET} paramiko"
+    else
+        echo -e "  ${RED}[FAIL]${RESET} paramiko"
+        missing=$((missing + 1))
+    fi
+else
+    echo -e "  ${YELLOW}[OPTIONAL]${RESET} paramiko (not available in Termux, SSH auditing disabled)"
+fi
 
 if [ $missing -gt 0 ]; then
     echo -e "${RED}[!] Some packages failed to install${RESET}"

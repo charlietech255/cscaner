@@ -146,14 +146,23 @@ pip install -r requirements.txt
 
 All of these get installed automatically by `install.sh`:
 
+**Required:**
 - `requests` — HTTP requests
 - `colorama` — Colored terminal output
-- `paramiko` — SSH functionality
 - `python-whois` — WHOIS lookups
 - `beautifulsoup4` — HTML parsing
-- `python-nmap` — Nmap integration (Linux only)
+
+**Optional:**
+- `paramiko` — SSH auditing (not available on Termux due to cryptography build requirements)
+- `python-nmap` — Nmap integration (Linux only, not Termux)
 
 **No external crypto library needed** — crypto_utils.py uses Python stdlib (hashlib, hmac, base64) only.
+
+### Termux Compatibility
+
+On Termux, `paramiko` cannot be installed because it depends on `cryptography`, which requires Rust to compile. This is a Termux limitation, not CSCAN. If you need SSH auditing, use CSCAN on a standard Linux distribution.
+
+All other CSCAN features (web scanning, WHOIS, directory brute-forcing, etc.) work perfectly on Termux.
 
 ---
 
@@ -165,13 +174,19 @@ After installation, you can verify everything works like this:
 # Activate venv if you are on Kali
 source venv/bin/activate  # Optional
 
-# Test that all imports work
+# Test that all imports work (core dependencies)
 python3 << 'EOF'
 import requests
 import colorama
-import paramiko
 import bs4
-print("All dependencies are OK!")
+print("All core dependencies are OK!")
+
+# Try optional paramiko (may fail on Termux, which is OK)
+try:
+    import paramiko
+    print("paramiko is available for SSH auditing")
+except ImportError:
+    print("paramiko not available (normal on Termux)")
 EOF
 
 # Test CSCAN itself
