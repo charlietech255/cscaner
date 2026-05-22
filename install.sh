@@ -155,6 +155,21 @@ LAUNCHER
     
     chmod +x cscan_launcher.sh
     echo -e "${GREEN}[+] Launcher created: ${BLUE}./cscan_launcher.sh${RESET}"
+elif [ $IS_TERMUX -eq 1 ]; then
+    echo -e "${BLUE}[*] Creating Termux launcher script...${RESET}"
+    
+    cat > cscan_launcher.sh << 'LAUNCHER'
+#!/usr/bin/env bash
+# CSCAN Launcher for Termux
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
+
+python3 cscan.py "$@"
+LAUNCHER
+    
+    chmod +x cscan_launcher.sh
+    echo -e "${GREEN}[+] Launcher created: ${BLUE}./cscan_launcher.sh${RESET}"
 fi
 
 # ── Final Instructions ─────────────────────────────────────────────────────────
@@ -169,7 +184,8 @@ if [ $IS_KALI -eq 1 ]; then
     echo -e "  ${YELLOW}python3 cscan.py${RESET}            (if venv already active)"
 elif [ $IS_TERMUX -eq 1 ]; then
     echo -e "${BLUE}To run CSCAN on Termux:${RESET}"
-    echo -e "  ${YELLOW}python3 cscan.py${RESET}"
+    echo -e "  ${YELLOW}./cscan_launcher.sh${RESET}         (recommended)"
+    echo -e "  ${YELLOW}python3 cscan.py${RESET}           (direct execution)"
 else
     echo -e "${BLUE}To run CSCAN:${RESET}"
     echo -e "  ${YELLOW}./cscan_launcher.sh${RESET}         (if launcher created)"

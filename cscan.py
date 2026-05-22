@@ -32,7 +32,9 @@ if sys.stdout.encoding.lower() != 'utf-8':
 
 # ── Dependency check ──────────────────────────────────────────────────────────
 REQUIRED = {'requests': 'requests', 'colorama': 'colorama',
-            'paramiko': 'paramiko',  'whois': 'python-whois', 'nmap': 'python-nmap'}
+            'whois': 'python-whois'}
+
+OPTIONAL = {'paramiko': 'paramiko', 'nmap': 'python-nmap'}
 
 missing = []
 for mod, pkg in REQUIRED.items():
@@ -42,10 +44,18 @@ for mod, pkg in REQUIRED.items():
         missing.append(pkg)
 
 if missing:
-    print(f"\n[!] Missing packages: {', '.join(missing)}")
+    print(f"\n[!] Missing required packages: {', '.join(missing)}")
     print(f"[!] Please install dependencies securely by running:")
     print(f"    pip install -r requirements.txt\n")
     sys.exit(1)
+
+# Check optional dependencies
+unavailable_optional = []
+for mod, pkg in OPTIONAL.items():
+    try:
+        __import__(mod)
+    except ImportError:
+        unavailable_optional.append(pkg)
 
 # ── Language system must be loaded BEFORE ui ────────────────
 from modules.lang import (
@@ -395,6 +405,12 @@ async def handle_cms():
     pause()
 
 async def handle_ssh():
+    if 'paramiko' in unavailable_optional:
+        alert("SSH Auditing is not available (paramiko not installed)")
+        info("On Termux: SSH auditing is disabled due to cryptography build requirements")
+        pause()
+        return
+    
     t = get_target()
     if not t: return
     _apply_stealth()
@@ -476,8 +492,11 @@ async def handle_auto_scan():
         ("5/8  SSL Certificate",      _run_sync, (ssl_inspect, t, 443)),
         ("6/8  Web Vuln Scan",        web_vuln_scan, (t, SESSION['use_ssl'], mutate, workers)),
         ("7/8  HTTP Header Audit",    http_header_audit, (t, SESSION['use_ssl'])),
-        ("8/8  SSH Audit",            _run_sync, (ssh_audit, t, 22, None, ssh_delay)),
     ]
+    
+    # Add SSH Audit only if paramiko is available
+    if 'paramiko' not in unavailable_optional:
+        steps.append(("8/8  SSH Audit", _run_sync, (ssh_audit, t, 22, None, ssh_delay)))
 
     all_results = {}
     for step in steps:
@@ -785,7 +804,6 @@ HANDLERS = {
     '11': handle_header_audit,
     '12': handle_dir_brute,
     '13': handle_cms,
-    '14': handle_ssh,
     '15': handle_ftp,
     '16': handle_http_auth,
     '17': handle_auto_scan,
@@ -807,6 +825,10 @@ HANDLERS = {
     's':  handle_stealth_toggle,
     'S':  handle_stealth_toggle,
 }
+
+# Add SSH handler only if paramiko is available
+if 'paramiko' not in unavailable_optional:
+    HANDLERS['14'] = handle_ssh
 
 
 def _build_disclaimer() -> str:
