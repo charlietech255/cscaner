@@ -17,18 +17,27 @@ echo -e "${BLUE}[*] Detecting environment...${RESET}"
 IS_TERMUX=0
 IS_KALI=0
 
-if [ -z "$PREFIX" ]; then
-    PREFIX="/data/data/com.termux/files/usr"
-fi
-
-if [ -d "$PREFIX/com.termux" ] || [ -f "/etc/termux-motd.sh" ] 2>/dev/null; then
+# Better Termux detection
+if [[ "$PREFIX" == *"com.termux"* ]] || [[ "$HOME" == *"com.termux"* ]] || [ -d "/data/data/com.termux" ]; then
     IS_TERMUX=1
     echo -e "${GREEN}[+] Termux detected${RESET}"
 elif grep -qi "kali" /etc/os-release 2>/dev/null; then
     IS_KALI=1
     echo -e "${GREEN}[+] Kali Linux detected${RESET}"
 else
-    echo -e "${YELLOW}[!] Unknown environment (assuming Linux)${RESET}"
+    echo -e "${YELLOW}[!] Could not auto-detect environment${RESET}"
+    echo ""
+    echo -e "${BLUE}[?] Which environment are you using?${RESET}"
+    echo "  1) Kali Linux / Debian / Ubuntu"
+    echo "  2) Termux (Android)"
+    read -p "Choose [1 or 2]: " CHOICE
+    
+    if [ "$CHOICE" == "2" ]; then
+        IS_TERMUX=1
+        echo -e "${GREEN}[+] Using Termux${RESET}"
+    else
+        echo -e "${GREEN}[+] Using Linux${RESET}"
+    fi
 fi
 
 # ── Check Python ───────────────────────────────────────────────────────────────
@@ -64,20 +73,25 @@ elif [ $IS_KALI -eq 1 ] && [ -d "venv" ]; then
 fi
 
 # ── Install Python Dependencies ────────────────────────────────────────────────
+echo ""
 echo -e "${BLUE}[*] Installing Python dependencies...${RESET}"
 
 PACKAGES="requests colorama python-whois beautifulsoup4"
 
-# Add python-nmap only if not Termux (optional on Termux)
-if [ $IS_TERMUX -eq 0 ]; then
+# Show what will be installed
+if [ $IS_TERMUX -eq 1 ]; then
+    echo -e "${YELLOW}[*] Termux mode: Skipping paramiko and python-nmap${RESET}"
+    echo -e "${YELLOW}[!] SSH auditing will not be available${RESET}"
+    echo -e "${GREEN}[+] Web scanning features fully available${RESET}"
+else
+    echo -e "${GREEN}[+] Installing optional packages: paramiko, python-nmap${RESET}"
+    # Add python-nmap only if not Termux
     PACKAGES="$PACKAGES python-nmap"
-fi
-
-# Add paramiko only if not Termux (requires Rust for cryptography compilation)
-if [ $IS_TERMUX -eq 0 ]; then
+    # Add paramiko only if not Termux (requires Rust for cryptography compilation)
     PACKAGES="$PACKAGES paramiko"
 fi
 
+echo ""
 pip install --upgrade pip setuptools 2>&1 | grep -E "(Successfully|already)" || true
 
 for pkg in $PACKAGES; do
