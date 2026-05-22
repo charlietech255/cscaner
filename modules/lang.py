@@ -68,8 +68,8 @@ _STRINGS = {
                             "sw": "EXPLOITATION"},
     "menu_auto":           {"en": "AUTOMATION",
                             "sw": "AUTOMATION"},
-    "menu_ai":             {"en": "AI ANALYSIS  ✦ Powered by AI",
-                            "sw": "AI ANALYSIS  ✦ Inayotumia AI"},
+    "menu_ai":             {"en": "AI ANALYSIS -- Powered by AI",
+                            "sw": "AI ANALYSIS -- Inayotumia AI"},
     "menu_exit":           {"en": "Exit CSCAN",
                             "sw": "Toka CSCAN"},
 
@@ -101,8 +101,8 @@ _STRINGS = {
     # ── Prompts & questions ────────────────────────────────────────────────────
     "prompt_target":       {"en": "Enter target  (URL / IP / domain)",
                             "sw": "Ingiza target  (URL / IP / domain)"},
-    "prompt_select":       {"en": "Select option  [0–23 | T=target | K=AI key]",
-                            "sw": "Chagua chaguo  [0–23 | T=target | K= Key ya AI]"},
+    "prompt_select":       {"en": "Select option  [0–25 | T=target | K=AI key | S=stealth]",
+                            "sw": "Chagua chaguo  [0–25 | T=target | K= Key ya AI | S=Stealth]"},
     "q_set_target_now":    {"en": "Set a target now?",
                             "sw": "Weka target sasa?"},
     "q_use_ssl":           {"en": "Use HTTPS/SSL?",
@@ -117,6 +117,32 @@ _STRINGS = {
                             "sw": "Faili limepakia maneno {n}."},
     "wordlist_err":        {"en": "Could not load file: {e}. Using default.",
                             "sw": "Imeshindwa kupakia faili: {e}. Inatumia chaguo-msingi."},
+
+    # ── Stealth section ────────────────────────────────────────────────────────
+    "stealth_title":       {"en": "STEALTH MODE CONFIGURATION",
+                            "sw": "MIPANGILIO YA STEALTH"},
+    "stealth_enabled":     {"en": "Stealth mode ENABLED",
+                            "sw": "Stealth imewashwa"},
+    "stealth_disabled":    {"en": "Stealth mode DISABLED",
+                            "sw": "Stealth imezimwa"},
+    "stealth_proxy_prompt":{"en": "Proxy (http/socks4/socks5://host:port) [none]",
+                            "sw": "Proxy [none]"},
+    "stealth_jitter_min":  {"en": "Min jitter (seconds) [0.5]",
+                            "sw": "Jitter chini (sekunde) [0.5]"},
+    "stealth_jitter_max":  {"en": "Max jitter (seconds) [2.0]",
+                            "sw": "Jitter juu (sekunde) [2.0]"},
+    "stealth_timing_prompt":{"en": "Timing (paranoid/sneaky/polite/normal/aggressive/insane) [normal]",
+                             "sw": "Timing profile [normal]"},
+    "stealth_mutate_prompt":{"en": "Mutate paths to evade WAF?",
+                             "sw": "Badilisha njia kuepuka WAF?"},
+    "stealth_ua_prompt":   {"en": "Rotate realistic User-Agents?",
+                             "sw": "Badilisha User-Agents?"},
+    "stealth_nmap_prompt": {"en": "Try nmap for port scans when available?",
+                             "sw": "Jaribu nmap kwa port scans?"},
+    "status_stealth_on":   {"en": "STEALTH ON",
+                             "sw": "STEALTH IMEWASHWA"},
+    "stealth_current":     {"en": "Current stealth config:",
+                             "sw": "Mipangilio ya stealth:"},
 
     # ── Status / info messages ─────────────────────────────────────────────────
     "no_target":           {"en": "No target provided.",
@@ -176,7 +202,7 @@ _STRINGS = {
     "auto_ssh_ok":         {"en": "SSH Hardened   : No weak credentials found",
                             "sw": "SSH Imeimarishwa: Hakuna taarifa dhaifu ilivyopatikana"},
     "auto_ssh_closed":     {"en": "SSH Port       : Not open",
-                            "sw": "Bandari ya SSH : Haifunguliki"},
+                            "sw": "Ports ya SSH : Haifunguliki"},
 
     # ── Port scan section ──────────────────────────────────────────────────────
     "port_full_title":     {"en": "FULL PORT SCAN — RANGE SELECTOR",
@@ -196,7 +222,7 @@ _STRINGS = {
     "banner_prompt":       {"en": "Specific ports (comma-separated, e.g. 22,80,443)",
                             "sw": "port maalum (tenganisha kwa koma, mfano 22,80,443)"},
     "banner_invalid":      {"en": "Invalid port input. Using all common ports.",
-                            "sw": "Ingizo batili la port. Inatumia bandari zote maarufu."},
+                            "sw": "Ingizo batili la port. Inatumia Ports zote maarufu."},
 
     # ── SSL section ────────────────────────────────────────────────────────────
     "ssl_port_prompt":     {"en": "SSL port [443]",           "sw": "Port ya SSL [443]"},
@@ -279,8 +305,8 @@ _STRINGS = {
     "sm3":  {"en": "Subdomains",        "sw": "Subdomains"},
     "sm4":  {"en": "GeoIP Tracker",     "sw": "GeoIP Location"},
     "sm5":  {"en": "Reverse DNS",       "sw": "Reverse DNS"},
-    "sm6":  {"en": "Port Scan",         "sw": "Skana Bandari"},
-    "sm7":  {"en": "Full Port Scan",    "sw": "Bandari Zote"},
+    "sm6":  {"en": "Port Scan",         "sw": "Skana Ports"},
+    "sm7":  {"en": "Full Port Scan",    "sw": "Ports Zote"},
     "sm8":  {"en": "Banner Grabber",    "sw": "Kunasa Banner"},
     "sm9":  {"en": "SSL/TLS Inspect",   "sw": "SSL/TLS Ukaguzi"},
     "sm10": {"en": "Web Vuln Scan",     "sw": "Skana Udhaifu"},
@@ -297,6 +323,8 @@ _STRINGS = {
     "sm21": {"en": "CVE Lookup",        "sw": "Tafuta CVE"},
     "sm22": {"en": "Ask AI Assistant",  "sw": "Uliza Msaidizi"},
     "sm23": {"en": "Security Report",   "sw": "Ripoti ya Usalama"},
+    "sm24": {"en": "Stealth Config",    "sw": "Mipangilio ya Stealth"},
+    "sm25": {"en": "Toggle Stealth",    "sw": "Washa/Zima Stealth"},
 
     # ── Short section headers for 2-col table (max 19 chars each) ────────────
     "sh_recon":   {"en": "RECONNAISSANCE",  "sw": "RECONNAISSANCE"},
@@ -305,7 +333,8 @@ _STRINGS = {
     "sh_exploit": {"en": "EXPLOITATION",    "sw": "EXPLOITATION"},
     "sh_auto":    {"en": "AUTOMATION",      "sw": "AUTOMATION"},
     "sh_ai":      {"en": "AI ANALYSIS",   "sw": "AI ANALYSIS"},
-    "m_nav_hint": {"en": "T=Target  K=AI Key", "sw": "T=Lengo   K=key ya AI"},
+    "sh_stealth": {"en": "STEALTH & OPSEC", "sw": "STEALTH & OPSEC"},
+    "m_nav_hint": {"en": "T=Target  K=AI Key  S=Stealth", "sw": "T=Lengo   K=key ya AI  S=Stealth"},
 }
 
 

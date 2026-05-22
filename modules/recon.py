@@ -15,7 +15,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import os
 
+from modules.stealth import StealthSession
+
 WORDLISTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'wordlists')
+
+# ── Module-level stealth session (configured from cscan.py) ───────────────────
+_stealth_session = None
+
+def set_stealth_session(session: StealthSession):
+    global _stealth_session
+    _stealth_session = session
 
 def _load_wordlist(filename: str) -> list:
     path = os.path.join(WORDLISTS_DIR, filename)
@@ -72,12 +81,20 @@ def dns_lookup(target: str) -> dict:
     # lets jaribu DNS records kupitia public DNS-over-HTTPS (Cloudflare)
     for rtype in ('MX', 'NS'):
         try:
-            r = requests.get(
-                'https://cloudflare-dns.com/dns-query',
-                params={'name': hostname, 'type': rtype},
-                headers={'Accept': 'application/dns-json'},
-                timeout=5
-            )
+            if _stealth_session:
+                r = _stealth_session.get(
+                    'https://cloudflare-dns.com/dns-query',
+                    params={'name': hostname, 'type': rtype},
+                    headers={'Accept': 'application/dns-json'},
+                    timeout=5
+                )
+            else:
+                r = requests.get(
+                    'https://cloudflare-dns.com/dns-query',
+                    params={'name': hostname, 'type': rtype},
+                    headers={'Accept': 'application/dns-json'},
+                    timeout=5
+                )
             data = r.json()
             answers = [a['data'] for a in data.get('Answer', [])]
             result[rtype.lower()] = answers
@@ -129,7 +146,7 @@ def whois_lookup(target: str) -> dict:
 
 
 # ── Subdomain Enumerator ──────────────────────────────────────────────────────
-def subdomain_enum(target: str, wordlist: list = None) -> list:
+def subdomain_enum(target: str, wordlist: list = None, workers: int = 30) -> list:
     section("SUBDOMAIN ENUMERATOR")
     hostname = extract_hostname(target)
     if hostname.startswith('www.'):
@@ -152,7 +169,7 @@ def subdomain_enum(target: str, wordlist: list = None) -> list:
         except Exception:
             pass
 
-    with ThreadPoolExecutor(max_workers=30) as ex:
+    with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = [ex.submit(check_sub, s) for s in wl]
         for i, _ in enumerate(as_completed(futures), 1):
             progress_bar(i, len(wl), 'scanning subdomains')
@@ -179,7 +196,10 @@ def geoip_lookup(target: str) -> dict:
     info(f"Looking up: {BR}{W}{ip}{RS}\n")
 
     try:
-        r = requests.get(f"http://ip-api.com/json/{ip}?fields=66846719", timeout=8)
+        if _stealth_session:
+            r = _stealth_session.get(f"http://ip-api.com/json/{ip}?fields=66846719", timeout=8)
+        else:
+            r = requests.get(f"http://ip-api.com/json/{ip}?fields=66846719", timeout=8)
         d = r.json()
         if d.get('status') == 'success':
             rows = [

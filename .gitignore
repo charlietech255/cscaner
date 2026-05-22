@@ -1,0 +1,37 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+.env.local
+
+# IDE folders
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# CSCAN generated reports and output
+reports/
+cscan_report_*.json
+cscan_ai_report_*.txt
+
+# Logs
+*.log
+
+# Config (user-specific, created at runtime)
+.cscan_config.json

@@ -1,76 +1,147 @@
 #!/usr/bin/env bash
 
-# Defines colors for bash output
+# ── CSCAN Installation Script ──────────────────────────────────────────────────
+# Works on: Kali Linux, Debian, Ubuntu, Termux, and other Linux distributions
+# Handles PEP 668 externally-managed-environment errors automatically
+
+# Color definitions
 GREEN="\e[1;32m"
 BLUE="\e[1;36m"
 YELLOW="\e[1;33m"
 RED="\e[1;31m"
 RESET="\e[0m"
 
-echo -e "${BLUE}[*] Checking Termux environment setup...${RESET}"
+# ── Detect Environment ─────────────────────────────────────────────────────────
+echo -e "${BLUE}[*] Detecting environment...${RESET}"
 
-# Use Termux prefix if available, otherwise default path
+IS_TERMUX=0
+IS_KALI=0
+
 if [ -z "$PREFIX" ]; then
     PREFIX="/data/data/com.termux/files/usr"
 fi
 
-if ! command -v pkg &> /dev/null; then
-    echo -e "${RED}[!] 'pkg' package manager not found.${RESET}"
-    echo -e "${YELLOW}[!] This script is designed specifically for Termux.${RESET}"
-fi
-
-# Check for Python and Git
-MISSING_DEPS=0
-if ! command -v python &> /dev/null || ! command -v pip &> /dev/null || ! command -v git &> /dev/null; then
-    echo -e "${RED}[!] Python, pip, or git is missing from your Termux environment.${RESET}"
-    MISSING_DEPS=1
-fi
-
-if [ $MISSING_DEPS -eq 1 ]; then
-    echo -e "${YELLOW}[!] The tool requires Python, pip, and git to function.${RESET}"
-    read -p "[?] Do you want to automatically install them now? (y/N): " allow_install
-    
-    if [[ "$allow_install" =~ ^[Yy]$ ]]; then
-        echo -e "${BLUE}[*] Updating repositories and installing dependencies...${RESET}"
-        pkg update -y
-        pkg install python git -y
-    else
-        echo -e "${RED}[!] CSCAN setup cannot complete without dependencies. Installation aborted.${RESET}"
-        exit 1
-    fi
+if [ -d "$PREFIX/com.termux" ] || [ -f "/etc/termux-motd.sh" ] 2>/dev/null; then
+    IS_TERMUX=1
+    echo -e "${GREEN}[+] Termux detected${RESET}"
+elif grep -qi "kali" /etc/os-release 2>/dev/null; then
+    IS_KALI=1
+    echo -e "${GREEN}[+] Kali Linux detected${RESET}"
 else
-    echo -e "${GREEN}[+] Base environment (Python, Git) found.${RESET}"
+    echo -e "${YELLOW}[!] Unknown environment (assuming Linux)${RESET}"
 fi
 
-echo -e "${BLUE}[*] Installing required Python dependencies...${RESET}"
-pip install requests colorama paramiko python-whois > /dev/null
-if [ $? -ne 0 ]; then
-    echo -e "${RED}[!] Failed to install Python packages. Check your internet connection.${RESET}"
+# ── Check Python ───────────────────────────────────────────────────────────────
+if ! command -v python3 &> /dev/null; then
+    echo -e "${RED}[!] Python 3 not found${RESET}"
     exit 1
 fi
-echo -e "${GREEN}[+] Dependencies installed successfully.${RESET}"
 
-echo -e "${BLUE}[*] Creating universal shortcut...${RESET}"
+PYTHON=$(command -v python3)
+echo -e "${GREEN}[+] Using Python: $PYTHON${RESET}"
 
-TOOL_DIR="$(pwd)"
-BIN_PATH="$PREFIX/bin/cscan"
+# ── Setup Virtual Environment (required for Kali/system Python) ────────────────
+if [ $IS_KALI -eq 1 ] && ! [ -d "venv" ]; then
+    echo -e "${BLUE}[*] Setting up virtual environment (Kali requirement)...${RESET}"
+    
+    if ! $PYTHON -m venv venv 2>/dev/null; then
+        echo -e "${RED}[!] Failed to create venv. Installing python3-venv...${RESET}"
+        sudo apt install -y python3-venv python3-pip 2>/dev/null || {
+            echo -e "${YELLOW}[!] Could not install venv package.${RESET}"
+            echo -e "${YELLOW}[!] Try: sudo apt install python3-venv${RESET}"
+            exit 1
+        }
+        $PYTHON -m venv venv
+    fi
+    
+    echo -e "${GREEN}[+] Virtual environment created${RESET}"
+    ACTIVATE_SCRIPT="$(pwd)/venv/bin/activate"
+    source "$ACTIVATE_SCRIPT"
+    echo -e "${GREEN}[+] Virtual environment activated${RESET}"
+elif [ $IS_KALI -eq 1 ] && [ -d "venv" ]; then
+    echo -e "${YELLOW}[*] Virtual environment already exists. Activating...${RESET}"
+    source "$(pwd)/venv/bin/activate"
+fi
 
-# Create the wrapper script in the bin directory
-cat << EOF > "$BIN_PATH"
+# ── Install Python Dependencies ────────────────────────────────────────────────
+echo -e "${BLUE}[*] Installing Python dependencies...${RESET}"
+
+PACKAGES="requests colorama paramiko python-whois beautifulsoup4"
+
+# Add python-nmap only if not Termux (optional on Termux)
+if [ $IS_TERMUX -eq 0 ]; then
+    PACKAGES="$PACKAGES python-nmap"
+fi
+
+pip install --upgrade pip setuptools 2>&1 | grep -E "(Successfully|already)" || true
+
+for pkg in $PACKAGES; do
+    echo -ne "  Installing $pkg... "
+    if pip install "$pkg" -q 2>&1; then
+        echo -e "${GREEN}[OK]${RESET}"
+    else
+        echo -e "${YELLOW}[!!]${RESET}"
+    fi
+done
+
+# ── Verify Installation ────────────────────────────────────────────────────────
+echo -e "${BLUE}[*] Verifying installation...${RESET}"
+
+missing=0
+for pkg in requests colorama paramiko; do
+    python3 -c "import $(echo $pkg | sed 's/-/_/g')" 2>/dev/null
+    if [ $? -eq 0 ]; then
+        echo -e "  ${GREEN}[OK]${RESET} $pkg"
+    else
+        echo -e "  ${RED}[FAIL]${RESET} $pkg"
+        missing=$((missing + 1))
+    fi
+done
+
+if [ $missing -gt 0 ]; then
+    echo -e "${RED}[!] Some packages failed to install${RESET}"
+    exit 1
+fi
+
+# ── Create Launcher Script (for Kali convenience) ───────────────────────────────
+if [ $IS_KALI -eq 1 ]; then
+    echo -e "${BLUE}[*] Creating launcher script...${RESET}"
+    
+    cat > cscan_launcher.sh << 'LAUNCHER'
 #!/usr/bin/env bash
-cd "$TOOL_DIR"
-python cscan.py "\$@"
-EOF
+# CSCAN Launcher - Automatically activates venv and runs cscan
 
-# Make both the wrapper and the original script executable
-chmod +x "$BIN_PATH"
-chmod +x "$TOOL_DIR/cscan.py" 2>/dev/null
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR"
 
-echo -e "${GREEN}"
-echo "  ╔══════════════════════════════════════════╗"
-echo "  ║         INSTALLATION COMPLETE  
-               enjoy C scanner toka kwa charlie
-echo "  ╚══════════════════════════════════════════╝"
-echo -e "${RESET}"
-echo -e "You can now run your tool directly from any folder by typing:"
-echo -e "  ${BLUE}cscan${RESET}\n"
+if [ -d "venv" ]; then
+    source venv/bin/activate
+fi
+
+python3 cscan.py "$@"
+LAUNCHER
+    
+    chmod +x cscan_launcher.sh
+    echo -e "${GREEN}[+] Launcher created: ${BLUE}./cscan_launcher.sh${RESET}"
+fi
+
+# ── Final Instructions ─────────────────────────────────────────────────────────
+echo -e "\n${GREEN}╔════════════════════════════════════════════════════════╗${RESET}"
+echo -e "${GREEN}║          CSCAN Installation Complete!                 ║${RESET}"
+echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${RESET}\n"
+
+if [ $IS_KALI -eq 1 ]; then
+    echo -e "${BLUE}To run CSCAN on Kali:${RESET}"
+    echo -e "  ${YELLOW}./cscan_launcher.sh${RESET}          (auto venv activation)"
+    echo -e "  ${YELLOW}source venv/bin/activate${RESET}    (then: python3 cscan.py)"
+    echo -e "  ${YELLOW}python3 cscan.py${RESET}            (if venv already active)"
+elif [ $IS_TERMUX -eq 1 ]; then
+    echo -e "${BLUE}To run CSCAN on Termux:${RESET}"
+    echo -e "  ${YELLOW}python3 cscan.py${RESET}"
+else
+    echo -e "${BLUE}To run CSCAN:${RESET}"
+    echo -e "  ${YELLOW}./cscan_launcher.sh${RESET}         (if launcher created)"
+    echo -e "  ${YELLOW}python3 cscan.py${RESET}           (direct execution)"
+fi
+
+echo -e "\n${GREEN}[+] All dependencies installed successfully!${RESET}\n"

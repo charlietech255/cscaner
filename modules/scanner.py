@@ -7,6 +7,7 @@ Port Scanner, Banner Grabber, SSL/TLS Inspector
 import socket
 import ssl
 import time
+import random
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -52,42 +53,16 @@ COMMON_PORTS = {
 # Risky / ports hatari(potential)
 RISKY_PORTS = {23, 135, 139, 445, 1723, 3389, 5900, 6379, 9200, 27017}
 
-# Banner probe payloads
-BANNER_PROBES = {
-    21:  b"USER anonymous\r\n",
-    22:  b"SSH-2.0-CSCAN\r\n",
-    25:  b"EHLO cscan.local\r\n",
-    80:  b"HEAD / HTTP/1.0\r\nHost: localhost\r\n\r\n",
-    110: b"USER test\r\n",
-    143: b"A001 CAPABILITY\r\n",
-}
-
 TIMEOUT = 1.5
 
 
 # ── Core scan ─────────────────────────────────────────────────────────────────
-def _probe_port(ip: str, port: int) -> tuple:
-    """Try TCP connect. Returns (port, is_open, banner)."""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(TIMEOUT)
-        if sock.connect_ex((ip, port)) == 0:
-            banner = ''
-            try:
-                sock.settimeout(2)
-                if port in BANNER_PROBES:
-                    sock.send(BANNER_PROBES[port])
-                else:
-                    sock.send(b"\r\n")
-                banner = sock.recv(1024).decode(errors='ignore').strip()
-            except Exception:
-                pass
-            sock.close()
-            return (port, True, banner)
-        sock.close()
-    except Exception:
-        pass
-    return (port, False, '')
+def _probe_port(ip: str, port: int, timeout: float = TIMEOUT, delay: float = 0.0) -> tuple:
+    """Try TCP connect with optional delay. Returns (port, is_open, banner)."""
+    from modules.stealth import stealth_banner_probe
+    if delay > 0:
+        time.sleep(delay)
+    return stealth_banner_probe(ip, port, timeout=timeout)
 
 
 def _display_port(port, banner, service):
@@ -97,19 +72,40 @@ def _display_port(port, banner, service):
 
 
 # ── Common port scan ──────────────────────────────────────────────────────────
-def port_scan_common(target: str) -> list:
+def port_scan_common(target: str, timing: str = 'normal', try_nmap: bool = False) -> list:
+    from modules.stealth import TIMING_PROFILES, try_nmap_scan
     section("PORT SCANNER — COMMON PORTS")
     ip = _resolve(target)
     if not ip:
         return []
     info(f"Target IP     : {BR}{W}{ip}{RS}")
-    info(f"Scanning      : {len(COMMON_PORTS)} common ports (multi-threaded)\n")
+    info(f"Scanning      : {len(COMMON_PORTS)} common ports")
+    info(f"Timing profile: {BR}{C}{timing}{RS}\n")
 
+    if try_nmap:
+        nmap_res = try_nmap_scan(ip, list(COMMON_PORTS.keys()), timing=timing, syn=False)
+        if nmap_res is not None:
+            open_ports = []
+            for port, banner in nmap_res:
+                open_ports.append((port, banner))
+                print()
+                _display_port(port, banner, COMMON_PORTS.get(port, 'unknown'))
+            print(); divider()
+            if open_ports:
+                warn(f"Found {len(open_ports)} open port(s). Review each service carefully.")
+            else:
+                ok("No common ports open. Firewall appears well-configured.")
+            return open_ports
+        warn("nmap scan failed or unavailable. Falling back to TCP connect scan.")
+
+    profile = TIMING_PROFILES.get(timing, TIMING_PROFILES['normal'])
     open_ports = []
     ports = list(COMMON_PORTS.keys())
+    if timing in ('paranoid', 'sneaky'):
+        random.shuffle(ports)
 
-    with ThreadPoolExecutor(max_workers=60) as ex:
-        futures = {ex.submit(_probe_port, ip, p): p for p in ports}
+    with ThreadPoolExecutor(max_workers=profile['workers']) as ex:
+        futures = {ex.submit(_probe_port, ip, p, profile['timeout'], profile['delay']): p for p in ports}
         done = 0
         for future in as_completed(futures):
             done += 1
@@ -130,28 +126,44 @@ def port_scan_common(target: str) -> list:
 
 
 # ── Full port scan ────────────────────────────────────────────────────────────
-def port_scan_full(target: str, start: int = 1, end: int = 65535) -> list:
+def port_scan_full(target: str, start: int = 1, end: int = 65535, timing: str = 'normal', try_nmap: bool = False) -> list:
+    from modules.stealth import TIMING_PROFILES, try_nmap_scan
     section(f"PORT SCANNER — FULL RANGE ({start}–{end})")
     ip = _resolve(target)
     if not ip:
         return []
     info(f"Target IP     : {BR}{W}{ip}{RS}")
     total = end - start + 1
-    info(f"Scanning      : {total} ports — this may take a while…\n")
+    info(f"Scanning      : {total} ports — this may take a while…")
+    info(f"Timing profile: {BR}{C}{timing}{RS}\n")
 
+    if try_nmap and total > 1000:
+        nmap_res = try_nmap_scan(ip, list(range(start, end + 1)), timing=timing, syn=False)
+        if nmap_res is not None:
+            open_ports = []
+            for port, banner in nmap_res:
+                open_ports.append((port, banner))
+                print()
+                _display_port(port, banner, COMMON_PORTS.get(port, 'unknown'))
+            print(); divider()
+            ok(f"Scan complete. {len(open_ports)} open port(s) found.")
+            return open_ports
+        warn("nmap scan failed or unavailable. Falling back to TCP connect scan.")
+
+    profile = TIMING_PROFILES.get(timing, TIMING_PROFILES['normal'])
     open_ports = []
     lock = __import__('threading').Lock()
 
     def scan(p):
-        port, is_open, banner = _probe_port(ip, p)
+        port_num, is_open, banner = _probe_port(ip, p, profile['timeout'], profile['delay'])
         if is_open:
             with lock:
-                open_ports.append((port, banner))
-                svc = COMMON_PORTS.get(port, 'unknown')
+                open_ports.append((port_num, banner))
+                svc = COMMON_PORTS.get(port_num, 'unknown')
                 print()
-                _display_port(port, banner, svc)
+                _display_port(port_num, banner, svc)
 
-    with ThreadPoolExecutor(max_workers=100) as ex:
+    with ThreadPoolExecutor(max_workers=profile['workers']) as ex:
         futures = [ex.submit(scan, p) for p in range(start, end + 1)]
         for i, _ in enumerate(as_completed(futures), 1):
             if i % 500 == 0:
@@ -175,11 +187,11 @@ def banner_grabber(target: str, ports: list = None) -> dict:
 
     results = {}
     for port in grab_ports:
-        port, is_open, banner = _probe_port(ip, port)
+        port_num, is_open, banner = _probe_port(ip, port, timeout=3.0, delay=0.0)
         if is_open and banner:
-            svc = COMMON_PORTS.get(port, 'unknown')
-            results[port] = banner
-            print(f"  {BR}{G}{port}/{svc:<12}{RS}  {Y}{banner[:60]}{RS}")
+            svc = COMMON_PORTS.get(port_num, 'unknown')
+            results[port_num] = banner
+            print(f"  {BR}{G}{port_num}/{svc:<12}{RS}  {Y}{banner[:60]}{RS}")
 
     if not results:
         warn("No banners captured on open ports.")

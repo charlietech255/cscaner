@@ -175,6 +175,12 @@ def _build_menu() -> str:
         row1('21', T("sm21")),
         row1('22', T("sm22")),
         row1('23', T("sm23")),
+        # STEALTH & OPSEC (single col)
+        MID1,
+        sec1(T("sh_stealth")),
+        MID1,
+        row1('24', T("sm24")),
+        row1('25', T("sm25")),
         # EXIT + NAV
         MID1,
         row1('0', T("menu_exit")),

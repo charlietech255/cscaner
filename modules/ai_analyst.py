@@ -39,7 +39,7 @@ def prompt_api_key() -> str:
     info(f"Get a free key at: {BR}{C}https://aistudio.google.com/app/apikey{RS}")
     info("Your key is only stored in memory for this session.\n")
 
-    key = input(f"  {BR}{M}[🔑]{RS} {BR}{W}Enter your Gemini API key: {RS}").strip()
+    key = input(f"  {BR}{M}[>]{RS} {BR}{W}Enter your Gemini API key: {RS}").strip()
     if not key:
         warn("No key entered.")
         return None
@@ -49,7 +49,7 @@ def prompt_api_key() -> str:
     try:
         resp = _call_gemini(key, "Reply with exactly: OK", max_tokens=5)
         if resp:
-            ok("API key is valid and working! ✔")
+            ok("API key is valid and working!")
             return key
         else:
             alert("Key validation failed — check your key and try again.")
@@ -288,10 +288,10 @@ def _render_ai_response(text: str):
         elif stripped and stripped[0].isdigit() and '. ' in stripped[:4]:
             print(f"\n  {BR}{Y}{stripped}{RS}")
 
-        elif stripped.startswith(('CRITICAL', 'HIGH RISK', 'MEDIUM RISK', '⚠', '🔴')):
+        elif stripped.startswith(('CRITICAL', 'HIGH RISK', 'MEDIUM RISK')):
             print(f"  {BR}{R}{stripped}{RS}")
 
-        elif stripped.startswith(('✔', '✅', 'LOW RISK', 'PASS')):
+        elif stripped.startswith(('LOW RISK', 'PASS')):
             print(f"  {BR}{G}{stripped}{RS}")
 
         elif stripped.startswith(('*', '-', '•')):
@@ -460,7 +460,7 @@ def generate_formal_report(api_key: str, target: str, results: dict) -> str:
 def _show_thinking():
     """Animated 'thinking' spinner while waiting for AI (blocking)."""
     import threading
-    chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+    chars = ['-', '\\', '|', '/', '-', '\\', '|', '/', '-', '/']
     msgs  = [
         "Gemini is analysing findings   ",
         "Cross-referencing vuln database",
