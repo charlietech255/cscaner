@@ -78,42 +78,6 @@ By default, CSCAN uses wordlists from the `wordlists/` folder. You can modify, u
 
 ---
 
-## Getting Updates
-
-To keep CSCAN up-to-date with the latest features, bug fixes, and security improvements, use Git to pull the latest changes:
-
-### Update from the Repository
-
-Navigate to your CSCAN directory and pull the latest changes:
-
-```bash
-cd cscaner
-git pull origin main
-```
-
-This will fetch all updates from the main repository and merge them into your local copy.
-
-### Check for Changes
-
-To see what has changed before pulling:
-
-```bash
-git fetch origin
-git log --oneline HEAD..origin/main
-```
-
-This shows a list of commits that exist in the remote repository but not yet in your local copy.
-
-### Check Your Current Version
-
-If you want to verify which version you are running, check the repo history:
-
-```bash
-git log --oneline -n 5
-```
-
----
-
 ## Stealth Mode & WAF Evasion
 
 CSCAN has a proper **Stealth & OPSEC** engine built in to reduce your detection footprint and get past basic WAF rules.
@@ -154,12 +118,11 @@ From the main menu:
 
 ## How it Works
 
-- **Python is the Boss:** The whole tool is written in Python 3. We use standard libraries plus powerful ones like `requests` for talking to web servers, `python-whois` to dig up domain secrets, and `paramiko` for SSH auditing (when available).
+- **Python is the Boss:** The whole tool is written in Python 3. We use standard libraries plus powerful ones like `requests` for talking to web servers, `paramiko` for testing SSH doors, and `python-whois` to dig up domain secrets.
 - **Multithreading:** Python's `ThreadPoolExecutor` is used throughout. Instead of sending one request and waiting, CSCAN sends many requests at the same time. This makes directory brute-forcing and sensitive path scanning really fast.
 - **Stealth Engine (`modules/stealth.py`):** A centralized session manager wraps every HTTP request with proxy support, header rotation, jitter, and WAF detection. Network scans inherit timing profiles and can fall back to `nmap` when available.
 - **Brute-Forcing:** We use large, carefully selected dictionaries stored in the `wordlists/` folder. CSCAN picks words from these lists and tests them against the target. When stealth mode is on, paths are optionally mutated to bypass naive filters.
 - **Smart Reconnaissance:** DNS lookups, WHOIS queries, and GeoIP tracking are performed using both system sockets and public APIs, now routed through your configured proxy when stealth is enabled.
-- **Termux Support:** CSCAN runs on Termux (Android terminal), but SSH auditing (paramiko) is not available due to build requirements. All web scanning features work perfectly.
 - **Termux Native:** We designed the UI specifically for mobile screens running Termux. Clean terminal color codes and responsive table layouts keep everything readable, even when you are on the go with your phone.
 
 Simply put, CSCAN does all the heavy lifting so you can focus on securing the system. Karibu sana to explore the code!
