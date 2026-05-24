@@ -205,12 +205,12 @@ def _build_findings_prompt(target: str, results: dict) -> str:
         exposed  = web.get('exposed', [])
         forb     = web.get('forbidden', [])
         if exposed:
-            paths = [f"{p} ({s} bytes)" for p, s in exposed]
+            paths = [f"{p} ({s} bytes)" for p, s, _ in exposed]
             lines.append(f"WEB EXPOSED PATHS: {', '.join(paths)}")
         else:
             lines.append("WEB EXPOSED PATHS: None found.")
         if forb:
-            lines.append(f"FORBIDDEN PATHS (403): {', '.join(p for p, _ in forb[:5])}")
+            lines.append(f"FORBIDDEN PATHS (403): {', '.join(p for p, _, _ in forb[:5])}")
 
     # HTTP headers
     hdr = results.get('headers', {})
@@ -338,6 +338,7 @@ def analyze_findings(api_key: str, target: str, results: dict) -> str:
     _show_thinking()
 
     response = _call_gemini(api_key, prompt, max_tokens=3000)
+    _stop_thinking()
     if response:
         _render_ai_response(response)
         ok("\nAI analysis complete.")
@@ -354,6 +355,7 @@ def quick_host_analysis(api_key: str, target: str) -> str:
     _show_thinking()
 
     response = _call_gemini(api_key, _build_quick_prompt(target), max_tokens=1500)
+    _stop_thinking()
     if response:
         _render_ai_response(response)
         return response
@@ -373,6 +375,7 @@ def cve_lookup(api_key: str) -> str:
     _show_thinking()
 
     response = _call_gemini(api_key, _build_cve_prompt(service, version), max_tokens=1200)
+    _stop_thinking()
     if response:
         _render_ai_response(response)
         return response
@@ -398,6 +401,7 @@ def ask_ai(api_key: str) -> str:
     print()
     _show_thinking()
     response = _call_gemini(api_key, prompt, max_tokens=1500)
+    _stop_thinking()
     if response:
         _render_ai_response(response)
         return response
@@ -434,6 +438,7 @@ def generate_formal_report(api_key: str, target: str, results: dict) -> str:
 
     _show_thinking()
     response = _call_gemini(api_key, prompt, max_tokens=4096)
+    _stop_thinking()
     if response:
         _render_ai_response(response)
 
@@ -486,3 +491,9 @@ def _show_thinking():
     _show_thinking._stop = stop
     # Small sleep to let the first frame render
     time.sleep(0.2)
+
+def _stop_thinking():
+    """Stop the thinking spinner."""
+    if hasattr(_show_thinking, '_stop'):
+        _show_thinking._stop.set()
+        time.sleep(0.1) # Allow thread time to clear line

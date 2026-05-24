@@ -62,6 +62,7 @@ from modules.lang import (
     T, get_lang, set_lang, save_language,
     is_first_launch, load_saved_language
 )
+load_saved_language()
 
 # ── Import our modules ────────────────────────────────────────────────────────
 from modules.ui        import *
@@ -248,7 +249,7 @@ def show_status():
 async def handle_dns():
     t = get_target()
     if not t: return
-    res = await dns_lookup(t)
+    res = await _run_sync(dns_lookup, t)
     SESSION['results']['dns'] = res
     if res.get('ipv4'):
         SESSION['ip'] = res['ipv4'][0]
@@ -257,7 +258,7 @@ async def handle_dns():
 async def handle_whois():
     t = get_target()
     if not t: return
-    res = await whois_lookup(t)
+    res = await _run_sync(whois_lookup, t)
     SESSION['results']['whois'] = res
     pause()
 
@@ -278,21 +279,21 @@ async def handle_subdomain():
         wl = None
     timing = SESSION['stealth']['timing'] if SESSION['stealth']['enabled'] else 'normal'
     workers = TIMING_PROFILES.get(timing, {}).get('workers', 30)
-    res = await subdomain_enum(t, wl, workers=workers)
+    res = await _run_sync(subdomain_enum, t, wl, workers=workers)
     SESSION['results']['subdomains'] = res
     pause()
 
 async def handle_geoip():
     t = get_target()
     if not t: return
-    res = await geoip_lookup(t)
+    res = await _run_sync(geoip_lookup, t)
     SESSION['results']['geoip'] = res
     pause()
 
 async def handle_reverse_dns():
     t = get_target()
     if not t: return
-    res = await reverse_dns(t)
+    res = await _run_sync(reverse_dns, t)
     SESSION['results']['reverse_dns'] = res
     pause()
 
@@ -363,14 +364,14 @@ async def handle_web_vuln():
     mutate = SESSION['stealth']['mutate_paths']
     timing = SESSION['stealth']['timing'] if SESSION['stealth']['enabled'] else 'normal'
     workers = TIMING_PROFILES.get(timing, {}).get('workers', 20)
-    res = await web_vuln_scan(t, SESSION['use_ssl'], mutate=mutate, workers=workers)
+    res = await _run_sync(web_vuln_scan, t, SESSION['use_ssl'], mutate=mutate, workers=workers)
     SESSION['results']['web_vuln'] = res
     pause()
 
 async def handle_header_audit():
     t = get_target()
     if not t: return
-    res = await http_header_audit(t, SESSION['use_ssl'])
+    res = await _run_sync(http_header_audit, t, SESSION['use_ssl'])
     SESSION['results']['headers'] = res
     pause()
 
@@ -393,14 +394,14 @@ async def handle_dir_brute():
     mutate = SESSION['stealth']['mutate_paths']
     timing = SESSION['stealth']['timing'] if SESSION['stealth']['enabled'] else 'normal'
     workers = TIMING_PROFILES.get(timing, {}).get('workers', 20)
-    res = await dir_bruteforce(t, SESSION['use_ssl'], wl, mutate=mutate, workers=workers)
+    res = await _run_sync(dir_bruteforce, t, SESSION['use_ssl'], wl, mutate=mutate, workers=workers)
     SESSION['results']['dir_brute'] = res
     pause()
 
 async def handle_cms():
     t = get_target()
     if not t: return
-    res = await cms_detect(t, SESSION['use_ssl'])
+    res = await _run_sync(cms_detect, t, SESSION['use_ssl'])
     SESSION['results']['cms'] = res
     pause()
 
@@ -450,7 +451,7 @@ async def handle_http_auth():
     _apply_stealth()
     section(T("http_auth_title"))
     path = input(f"  {BR}{W}{T('http_auth_path')}: {RS}").strip() or '/'
-    res  = await http_auth_brute(t, path)
+    res  = await _run_sync(http_auth_brute, t, path)
     SESSION['results']['http_auth'] = res
     pause()
 
@@ -485,13 +486,13 @@ async def handle_auto_scan():
     print(f"\n  {BR}{M}[*]{RS}  {T('auto_starting')} {BR}{C}{t}{RS}\n")
 
     steps = [
-        ("1/8  DNS Lookup",           dns_lookup, (t,)),
-        ("2/8  WHOIS Intelligence",   whois_lookup, (t,)),
-        ("3/8  GeoIP Location",       geoip_lookup, (t,)),
+        ("1/8  DNS Lookup",           _run_sync, (dns_lookup, t)),
+        ("2/8  WHOIS Intelligence",   _run_sync, (whois_lookup, t)),
+        ("3/8  GeoIP Location",       _run_sync, (geoip_lookup, t)),
         ("4/8  Port Scan (Common)",   _run_sync, (port_scan_common, t, timing, try_nmap)),
         ("5/8  SSL Certificate",      _run_sync, (ssl_inspect, t, 443)),
-        ("6/8  Web Vuln Scan",        web_vuln_scan, (t, SESSION['use_ssl'], mutate, workers)),
-        ("7/8  HTTP Header Audit",    http_header_audit, (t, SESSION['use_ssl'])),
+        ("6/8  Web Vuln Scan",        _run_sync, (web_vuln_scan, t, SESSION['use_ssl'], mutate, workers)),
+        ("7/8  HTTP Header Audit",    _run_sync, (http_header_audit, t, SESSION['use_ssl'])),
     ]
     
     # Add SSH Audit only if paramiko is available
@@ -851,7 +852,8 @@ def _build_disclaimer() -> str:
 
 
 async def interactive_mode():
-    run_language_picker()
+    if is_first_launch():
+        run_language_picker()
     cls()
     print(_build_disclaimer())
     if not prompt_yes(T("disclaimer_confirm")):

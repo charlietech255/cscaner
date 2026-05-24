@@ -154,7 +154,28 @@ python3 cscan.py "$@"
 LAUNCHER
     
     chmod +x cscan_launcher.sh
-    echo -e "${GREEN}[+] Launcher created: ${BLUE}./cscan_launcher.sh${RESET}"
+    echo -e "${GREEN}[+] Local launcher created: ${BLUE}./cscan_launcher.sh${RESET}"
+    
+    echo -e "${BLUE}[*] Setting up global 'cscan' command...${RESET}"
+    cat > /tmp/cscan_tmp << EOF
+#!/usr/bin/env bash
+# Global CSCAN Launcher
+SCRIPT_DIR="$(pwd)"
+cd "\$SCRIPT_DIR"
+if [ -d "venv" ]; then
+    source venv/bin/activate
+fi
+python3 cscan.py "\$@"
+EOF
+    if [ -w "/usr/local/bin" ]; then
+        mv /tmp/cscan_tmp /usr/local/bin/cscan
+        chmod +x /usr/local/bin/cscan
+        echo -e "${GREEN}[+] Global executable created: ${BLUE}cscan${RESET}"
+    else
+        sudo mv /tmp/cscan_tmp /usr/local/bin/cscan
+        sudo chmod +x /usr/local/bin/cscan
+        echo -e "${GREEN}[+] Global executable created: ${BLUE}cscan${RESET}"
+    fi
 elif [ $IS_TERMUX -eq 1 ]; then
     echo -e "${BLUE}[*] Creating Termux launcher script...${RESET}"
     
@@ -169,7 +190,20 @@ python3 cscan.py "$@"
 LAUNCHER
     
     chmod +x cscan_launcher.sh
-    echo -e "${GREEN}[+] Launcher created: ${BLUE}./cscan_launcher.sh${RESET}"
+    echo -e "${GREEN}[+] Local launcher created: ${BLUE}./cscan_launcher.sh${RESET}"
+    
+    echo -e "${BLUE}[*] Setting up global 'cscan' command...${RESET}"
+    if [ -n "$PREFIX" ] && [ -d "$PREFIX/bin" ]; then
+        cat > "$PREFIX/bin/cscan" << EOF
+#!/usr/bin/env bash
+# Global CSCAN Launcher for Termux
+SCRIPT_DIR="$(pwd)"
+cd "\$SCRIPT_DIR"
+python3 cscan.py "\$@"
+EOF
+        chmod +x "$PREFIX/bin/cscan"
+        echo -e "${GREEN}[+] Global executable created: ${BLUE}cscan${RESET}"
+    fi
 fi
 
 # ── Final Instructions ─────────────────────────────────────────────────────────
@@ -178,18 +212,20 @@ echo -e "${GREEN}║          CSCAN Installation Complete!                 ║${
 echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${RESET}\n"
 
 if [ $IS_KALI -eq 1 ]; then
-    echo -e "${BLUE}To run CSCAN on Kali:${RESET}"
-    echo -e "  ${YELLOW}./cscan_launcher.sh${RESET}          (auto venv activation)"
-    echo -e "  ${YELLOW}source venv/bin/activate${RESET}    (then: python3 cscan.py)"
-    echo -e "  ${YELLOW}python3 cscan.py${RESET}            (if venv already active)"
+    echo -e "${BLUE}To run CSCAN from anywhere:${RESET}"
+    echo -e "  ${YELLOW}cscan${RESET}                       (global command)"
+    echo -e "${BLUE}Or from this directory:${RESET}"
+    echo -e "  ${YELLOW}./cscan_launcher.sh${RESET}         (auto venv activation)"
 elif [ $IS_TERMUX -eq 1 ]; then
-    echo -e "${BLUE}To run CSCAN on Termux:${RESET}"
+    echo -e "${BLUE}To run CSCAN from anywhere:${RESET}"
+    echo -e "  ${YELLOW}cscan${RESET}                       (global command)"
+    echo -e "${BLUE}Or from this directory:${RESET}"
     echo -e "  ${YELLOW}./cscan_launcher.sh${RESET}         (recommended)"
-    echo -e "  ${YELLOW}python3 cscan.py${RESET}           (direct execution)"
 else
-    echo -e "${BLUE}To run CSCAN:${RESET}"
+    echo -e "${BLUE}To run CSCAN from anywhere:${RESET}"
+    echo -e "  ${YELLOW}cscan${RESET}                       (if global command was installed)"
+    echo -e "${BLUE}Or from this directory:${RESET}"
     echo -e "  ${YELLOW}./cscan_launcher.sh${RESET}         (if launcher created)"
-    echo -e "  ${YELLOW}python3 cscan.py${RESET}           (direct execution)"
 fi
 
 echo -e "\n${GREEN}[+] All dependencies installed successfully!${RESET}\n"

@@ -163,10 +163,10 @@ def web_vuln_scan(target: str, use_ssl: bool = False, mutate: bool = False, work
         pfx = "DIR LISTING: " if is_listing else "EXPOSED: "
         critical(f"{pfx}{base}{path}  [{size} bytes]")
 
-    for path, _ in findings['forbidden']:
+    for path, _, _ in findings['forbidden']:
         warn(f"Forbidden (may be internal): {base}{path}")
 
-    for path, _ in findings['auth_required']:
+    for path, _, _ in findings['auth_required']:
         info(f"Auth Required: {base}{path}")
 
     divider()
