@@ -1,12 +1,16 @@
 # CSCAN Installation Guide
 
-Hey, welcome! This guide will help you get CSCAN up and running on your machine. Just follow the steps below and you will be good to go.
+Hey, welcome! This guide will help you get **CSCAN** (C Scanner by Charlie Tech) up and running on your machine. Just follow the steps below and you will be good to go.
+
+With the latest updates, CSCAN now supports **Advanced Fingerprint-Resistant Browser Scanning** (WAF bypass, JS DOM extraction, cookie harvesting) and **AI Security Analyst Integration**. Below you'll find setup instructions for both core and advanced packages.
+
+---
 
 ## Quick Start
 
 ### Option 1: Automatic Installation (Recommended)
 
-This is the easiest way — just two commands:
+This is the easiest way — just run these commands:
 
 ```bash
 chmod +x install.sh
@@ -14,58 +18,105 @@ chmod +x install.sh
 ```
 
 The script will:
-- Detect your environment (Kali, Termux, or Linux)
-- Create a virtual environment (Kali only)
-- Install all the dependencies for you
-- Create a launcher script (Kali only)
+- Detect your environment (Kali, Termux, or standard Linux)
+- Create a virtual environment (Kali only, complying with PEP 668)
+- Install all core dependencies
+- Create a launcher shortcut (`cscan_launcher.sh` on Kali)
 
-### Option 2: Manual Installation on Kali (PEP 668 Fix)
+---
 
-**Problem:** You get `error: externally-managed-environment`
+## Advanced Feature Setup (Highly Recommended)
 
-**Solution:** Use a virtual environment — here is how:
+To make full use of all the new tools in CSCAN, configure these advanced modules:
+
+### 1. Advanced Browser Engine & WAF Evasion
+Required for Cloudflare WAF Bypass, JS DOM Page Rendering, Cookie Harvester, dynamic Form Login Testing, and JavaScript Secret Scanning.
+
+> [!NOTE]
+> The browser engine is fully supported on Kali Linux, Ubuntu, Debian, and other desktop/server architectures.
+
+Activate your environment and run:
+```bash
+# 1. Install the specialized fingerprint browser engine
+pip install "camoufox[geoip]"
+
+# 2. Fetch and synchronize the latest fingerprint data (downloads browser binaries)
+python -m camoufox fetch
+```
+
+### 2. AI Security Analyst (Gemini Integration)
+Required for Executive Findings Summaries, Quick Host Overview, CVE Lookup Assistant, and formal PDF/text Penetration Testing Report generation.
+
+1. Obtain a free or pay-as-you-go API key from the [Google AI Studio Console](https://aistudio.google.com/).
+2. You can:
+   - Provide the key interactively inside the CSCAN menu when selecting any option `19–23`.
+   - Or, permanently set it in your current terminal profile:
+     ```bash
+     export GEMINI_API_KEY="your-api-key-here"
+     ```
+
+---
+
+## Detailed Manual Installation Workflows
+
+### Option 2: Manual Installation on Kali Linux (PEP 668 Fix)
+
+If you prefer to set up manually and avoid `externally-managed-environment` pip errors, run the following:
 
 ```bash
 # 1. Install venv if you do not have it
-sudo apt install python3-venv python3-pip -y
+sudo apt update
+sudo apt install python3-venv python3-pip git nmap -y
 
 # 2. Create the virtual environment
 python3 -m venv venv
 
-# 3. Activate it
+# 3. Activate the environment
 source venv/bin/activate
 
-# 4. Install the dependencies
+# 4. Install core dependencies
 pip install -r requirements.txt
 
-# 5. Run CSCAN
+# 5. [Optional] Install advanced WAF evasion browser engine
+pip install "camoufox[geoip]"
+python -m camoufox fetch
+
+# 6. Run CSCAN
 python3 cscan.py
 ```
 
-### Option 3: Termux Installation
+### Option 3: Termux Installation (Android)
 
-If you are on Termux, it is even simpler:
+Termux does not enforce PEP 668, making installation very direct.
 
 ```bash
-pkg install python git -y
+# 1. Update Termux environment packages
+pkg update && pkg upgrade -y
+
+# 2. Install Python, Git, and Nmap (for port scan capabilities)
+pkg install python git nmap -y
+
+# 3. Install core dependencies
 pip install -r requirements.txt
+
+# 4. Run CSCAN
 python3 cscan.py
 ```
+
+*Note: The fingerprint-resistant browser engine (`camoufox`) is currently restricted on Termux due to chromium-under-qemu/playwright mobile compatibility. Core stealth, path mutations, adaptive backoff, and AI analysts are fully supported on Termux.*
 
 ---
 
 ## After Installation
 
-### On Kali:
+### On Kali / Desktop Linux:
+To run CSCAN anytime:
 ```bash
-# Method 1: Use the launcher (easiest)
+# If you used the installer
 ./cscan_launcher.sh
 
-# Method 2: Manual activation
+# Or manually:
 source venv/bin/activate
-python3 cscan.py
-
-# Method 3: Direct (if venv is already active)
 python3 cscan.py
 ```
 
@@ -74,25 +125,12 @@ python3 cscan.py
 python3 cscan.py
 ```
 
-### On Other Linux:
-```bash
-# Create a venv for safety
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python3 cscan.py
-```
-
 ---
 
 ## Troubleshooting
 
-Here are some common problems and how to fix them.
-
 ### Issue: `python3 -m venv: command not found`
-
-**Fix:** Install the venv package for your system:
-
+**Fix:** Install the venv package for your system distribution:
 ```bash
 # Debian/Ubuntu/Kali
 sudo apt install python3-venv
@@ -104,94 +142,46 @@ sudo dnf install python3-venv
 sudo pacman -S python-venv
 ```
 
-### Issue: `pip: command not found`
-
-**Fix:** Install pip:
-
+### Issue: `ModuleNotFoundError` when running CSCAN
+**Fix:** Make sure your virtual environment is active:
 ```bash
-# Debian/Ubuntu/Kali
-sudo apt install python3-pip
-
-# Fedora/RHEL
-sudo dnf install python3-pip
-```
-
-### Issue: Permission denied on install.sh
-
-**Fix:** Make it executable first:
-
-```bash
-chmod +x install.sh
-./install.sh
-```
-
-### Issue: `ModuleNotFoundError` when running cscan
-
-**Fix:** Make sure the dependencies are installed:
-
-```bash
-# If you are in a venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# If you are not in a venv yet
-python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
----
-
-## Dependencies
-
-All of these get installed automatically by `install.sh`:
-
-- `requests` — HTTP requests
-- `colorama` — Colored terminal output
-- `paramiko` — SSH functionality
-- `python-whois` — WHOIS lookups
-- `beautifulsoup4` — HTML parsing
-- `python-nmap` — Nmap integration (Linux only)
-
-**No external crypto library needed** — crypto_utils.py uses Python stdlib (hashlib, hmac, base64) only.
-
----
-
-## Environment Check
-
-After installation, you can verify everything works like this:
-
+### Issue: Playwright / Camoufox errors
+**Fix:** Ensure you fetched the browser binaries:
 ```bash
-# Activate venv if you are on Kali
-source venv/bin/activate  # Optional
-
-# Test that all imports work
-python3 << 'EOF'
-import requests
-import colorama
-import paramiko
-import bs4
-print("All dependencies are OK!")
-EOF
-
-# Test CSCAN itself
-python3 cscan.py
+python -m camoufox fetch
 ```
+If dynamic system libraries are missing on Linux, run `playwright install-deps` or ensure your system packages are updated.
 
 ---
 
-## Virtual Environment Explained
+## Dependencies Map
 
-A **virtual environment** (venv) is like a separate Python installation that keeps your packages isolated so they do not conflict with system packages. This is required on Kali because of PEP 668 restrictions.
+- **`requests`** — Interactive HTTP requests
+- **`colorama`** — Responsive colored terminal styling
+- **`paramiko`** — Multi-threaded SSH credential auditing
+- **`python-whois`** — Domain registry intelligence
+- **`python-nmap`** — Advanced nmap-integrated SYN scanning
+- **`beautifulsoup4`** — Static DOM HTML analysis
+- **`camoufox`** — (Optional) Advanced stealth browser engine for WAF evasion
+
+---
+
+## Virtual Environment (venv) Cheat Sheet
+
+A virtual environment keeps your packages isolated so they do not conflict with the system packages.
 
 ```bash
-# Activate venv (you need to do this every time you open a new terminal)
+# Activate the venv (needed each time you open a new terminal)
 source venv/bin/activate
 
-# Deactivate (when you are done)
+# Deactivate (when you want to return to standard terminal shell)
 deactivate
 
-# Remove venv completely (if you need to start fresh)
+# Clear venv to reinstall fresh
 rm -rf venv
 ```
 
@@ -199,10 +189,8 @@ rm -rf venv
 
 ## Getting Help
 
-If installation fails, try these steps:
-
-1. Check your Python version: `python3 --version` (you need 3.6 or higher)
-2. Check pip: `pip --version`
-3. Try updating: `pip install --upgrade pip setuptools`
-4. Check your internet connection
-5. Try the manual installation (see Option 2 above)
+If installation fails:
+1. Verify python version is 3.8+: `python3 --version`
+2. Update installer helpers: `pip install --upgrade pip setuptools`
+3. Ensure active internet connection.
+4. Try the automatic script option first: `bash install.sh`.

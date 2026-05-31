@@ -18,11 +18,12 @@ from modules.ui import (
 )
 
 # ── Gemini API config ─────────────────────────────────────────────────────────
-GEMINI_MODEL  = "gemini-2.0-flash"
-GEMINI_URL    = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{GEMINI_MODEL}:generateContent"
-)
+GEMINI_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro"
+]
 TIMEOUT       = 60  # Gemini can be slow on large payloads
 
 
@@ -65,8 +66,8 @@ def prompt_api_key() -> str:
 
 def _call_gemini(api_key: str, prompt: str, max_tokens: int = 2048) -> str | None:
     """
-    Send a prompt to Gemini via plain requests.post().
-    Returns the text response or None on error.
+    Send a prompt to Gemini via plain requests.post() with automatic fallback
+    to alternative models if the primary model is not supported or returns errors.
     """
     payload = {
         "contents": [
@@ -91,43 +92,65 @@ def _call_gemini(api_key: str, prompt: str, max_tokens: int = 2048) -> str | Non
         ]
     }
 
-    try:
-        resp = requests.post(
-            GEMINI_URL,
-            params={"key": api_key},
-            json=payload,
-            timeout=TIMEOUT,
-            headers={"Content-Type": "application/json"}
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        # Extract text
-        candidates = data.get("candidates", [])
-        if not candidates:
-            err = data.get("error", {})
-            warn(f"Gemini error: {err.get('message', 'Unknown error')}")
-            return None
-
-        parts = candidates[0].get("content", {}).get("parts", [])
-        return "".join(p.get("text", "") for p in parts).strip()
-
-    except requests.exceptions.HTTPError as e:
+    last_error = None
+    for model in GEMINI_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         try:
-            err_body = e.response.json().get("error", {})
-            alert(f"Gemini API error [{e.response.status_code}]: {err_body.get('message', str(e))}")
-        except Exception:
-            alert(f"HTTP error: {e}")
-        return None
-    except requests.exceptions.Timeout:
-        alert("Gemini request timed out. Try again.")
-        return None
-    except requests.exceptions.ConnectionError:
-        alert("No internet connection or Gemini unreachable.")
-        return None
-    except Exception as e:
-        alert(f"Unexpected error: {e}")
-        return None
+            resp = requests.post(
+                url,
+                params={"key": api_key},
+                json=payload,
+                timeout=TIMEOUT,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            # If the specific model is not found, unauthorized or restricted on free tier,
+            # we try the next model.
+            if resp.status_code in (400, 403, 404, 429):
+                try:
+                    err_msg = resp.json().get("error", {}).get("message", "API Error")
+                except Exception:
+                    err_msg = f"HTTP {resp.status_code}"
+                
+                last_error = f"{model}: {err_msg}"
+                continue
+                
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Extract text
+            candidates = data.get("candidates", [])
+            if not candidates:
+                err = data.get("error", {})
+                last_error = f"No candidates returned: {err.get('message', 'Unknown error')}"
+                continue
+
+            parts = candidates[0].get("content", {}).get("parts", [])
+            result_text = "".join(p.get("text", "") for p in parts).strip()
+            
+            # Successful response!
+            return result_text
+
+        except requests.exceptions.HTTPError as e:
+            try:
+                err_body = e.response.json().get("error", {})
+                last_error = f"API error on {model} [{e.response.status_code}]: {err_body.get('message', str(e))}"
+            except Exception:
+                last_error = f"HTTP error on {model}: {e}"
+            continue
+        except requests.exceptions.Timeout:
+            last_error = f"Request to {model} timed out."
+            continue
+        except requests.exceptions.ConnectionError:
+            last_error = f"Connection error trying {model}."
+            continue
+        except Exception as e:
+            last_error = f"Unexpected error on {model}: {e}"
+            continue
+
+    # If we made it here, all models in the fallback loop failed
+    alert(f"All Gemini models failed. Last error encountered:\n  {R}{last_error}{RS}")
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -331,7 +354,7 @@ def analyze_findings(api_key: str, target: str, results: dict) -> str:
 
     info(f"Target        : {BR}{W}{target}{RS}")
     info(f"Result sets   : {BR}{W}{len(results)}{RS} module(s) collected")
-    info(f"Model         : {BR}{C}{GEMINI_MODEL}{RS}")
+    info(f"Model         : {BR}{C}gemini-2.5-flash (with auto-fallback){RS}")
     print()
 
     prompt = _build_findings_prompt(target, results)

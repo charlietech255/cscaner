@@ -99,7 +99,8 @@ def _build_menu() -> str:
         if n <= 13: return BR + B
         if n <= 16: return BR + R
         if n <= 18: return BR + W
-        return BR + M
+        if n <= 27: return BR + M
+        return BR + C
 
     # ── box borders ──────────────────────────────────────────────────────
     TOP2  = f"  {C}╔{'═'*(wL+2)}╦{'═'*(wR+2)}╗{RS}"
@@ -181,6 +182,19 @@ def _build_menu() -> str:
         MID1,
         row1('24', T("sm24")),
         row1('25', T("sm25")),
+        row1('26', 'CF WAF Bypass (solve challenge)'),
+        row1('27', 'CF Bypass + Inject into session'),
+        # ADVANCED BROWSER ENGINE (single col)
+        MID1,
+        sec1("ADVANCED BROWSER ENGINE"),
+        MID1,
+        row1('28', 'JS-Rendered Page Analysis'),
+        row1('29', 'Network Traffic Capture'),
+        row1('30', 'Form Login Tester'),
+        row1('31', 'Screenshot Recon'),
+        row1('32', 'Browser Fingerprint Probe'),
+        row1('33', 'Cookie & Session Harvester'),
+        row1('34', 'JS Secret & Token Scanner'),
         # EXIT + NAV
         MID1,
         row1('0', T("menu_exit")),

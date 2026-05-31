@@ -574,7 +574,9 @@ def scan_api_endpoints(target: str, use_ssl: bool = False, workers: int = 10) ->
     def check_endpoint(endpoint):
         full_url = base.rstrip("/") + endpoint
         try:
-            res = requests.get(full_url, timeout=3, verify=not _insecure_ssl, headers={'User-Agent': 'Mozilla/5.0'})
+            res = _get(full_url, timeout=3)
+            if res is None:
+                return
             if res.status_code in [200, 403, 401]:
                 content_type = res.headers.get('Content-Type', '')
                 if 'json' in content_type.lower() or 'api' in content_type.lower() or res.status_code == 200:
@@ -588,6 +590,7 @@ def scan_api_endpoints(target: str, use_ssl: bool = False, workers: int = 10) ->
                         print(f"\n  {status_col}[{res.status_code}]{RS}  {full_url}")
         except Exception:
             pass
+
     
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = [ex.submit(check_endpoint, ep) for ep in API_ENDPOINTS]

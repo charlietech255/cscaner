@@ -2,7 +2,7 @@
 
 **CSCAN** is a cybersecurity scanner and pentesting toolkit made by Charlie Tech. It works great on **Termux** (Android) and also runs smooth on **Kali Linux** and other Debian-based systems.
 
-It comes with an easy-to-use command-line interface, built-in wordlists, plenty of scanning features, and a proper **stealth / WAF-evasion engine** so you can work without raising alarms. Whether you are doing bug bounty hunting, managing servers, or running a pentest — CSCAN has got you sorted.
+It comes with an easy-to-use command-line interface, built-in wordlists, plenty of scanning features, a fingerprint-resistant **Advanced Browser Engine (camoufox-based)**, and an active **Stealth & WAF-Evasion Engine** so you can work without raising alarms. Whether you are doing bug bounty hunting, managing servers, or running a pentest — CSCAN has got you sorted.
 
 ---
 
@@ -15,8 +15,10 @@ It comes with an easy-to-use command-line interface, built-in wordlists, plenty 
 - **Reconnaissance Suite** — Subdomain enumeration, DNS/WHOIS lookups, and GeoIP location tracking.
 - **Exploitation & Credential Auditing** — Built-in SSH brute-forcer, FTP anonymous login checker, and HTTP Basic Auth brute-forcing.
 - **Stealth & WAF Evasion** — Proxy/Tor support, request jitter, User-Agent rotation, path mutation, adaptive backoff, and nmap-integrated timing profiles.
+- **Advanced Browser Engine (camoufox)** — JS-rendered page source/DOM extraction, full network traffic capture (HAR / WebSocket / dynamic API endpoint discovery), cookie harvesting, dynamic form login testing, visual screenshot recon, browser fingerprint probing, and client-side JS secret scanning.
 - **Bilingual Support** — Interface available in English and Kiswahili.
 - **Extensive Built-in Wordlists** — Pre-loaded with over 1,000+ entries for sensitive paths, subdomains, directory bruteforcing, and credentials.
+- **AI Security Analyst Integration** — Gemini API-powered scan analysis, host overview, CVE lookup assistant, and professional PDF/text penetration testing report generation.
 
 ---
 
@@ -40,6 +42,13 @@ CSCAN comes with an installer script that handles everything for you — it chec
 
 3. **Done!**
    The install script maps the tool to your binaries. Once installed, just run it from anywhere.
+
+#### Dynamic Browser Engine Dependencies (Optional, required for WAF Bypass / JS Render modules)
+If you wish to use the Advanced Browser Engine:
+```bash
+pip install "camoufox[geoip]"
+python -m camoufox fetch
+```
 
 ### On Kali Linux
 
@@ -145,16 +154,31 @@ From the main menu:
 | **SSH Brute Delay** | Introduce per-attempt delays during SSH credential audits when stealth is active. |
 | **Cookie Persistence** | Re-use session cookies across requests to behave more like a real browser session. |
 
-### Proxy Example (Tor)
+---
 
-1. Enable stealth `[25]`.
-2. Open **Stealth Config `[24]`**.
-3. Enter proxy: `socks5://127.0.0.1:9050`.
-4. Set jitter (e.g., `1.0` – `3.0` seconds).
-5. Choose a timing profile (e.g., `sneaky`).
-6. Run any web or network module.
+## 🛡️ Smart WAF Detection & Auto-Evasion (NEW!)
 
-> **Tip:** For Tor on Termux, install Tor with `pkg install tor`, then run `tor` in a separate session before scanning.
+CSCAN now features an **intelligent, automated WAF detection and evasion pipeline** integrated directly into the **Full Auto-Scan (Option 17)**. 
+
+### How It Works Under The Hood
+When you run the **Full Auto-Scan Pipeline**, CSCAN executes the following logic automatically:
+
+1. **Pre-Scan Active WAF Probe** — Performs a silent HTTP verification probe on the target to identify WAF signatures. Supported platforms include:
+   - **Cloudflare** (`cf-ray`, `__cfduid`, etc.)
+   - **Akamai** (`x-akamai-transformed`)
+   - **Sucuri** (`x-sucuri-id`)
+   - **AWS Shield / WAF** (`x-amzn-requestid`, `awselb`)
+   - **Incapsula** (`incap_ses`, `visid_incap`)
+   - **Generic WAF / Firewall** (intercepts typical block signatures/error messages)
+2. **Auto-Stealth Escalation** — If any WAF is detected, the scan posture is escalated instantly:
+   - Stealth Mode is turned **ON** automatically.
+   - Timing profile is lowered to **`sneaky`** speed (limiting worker threads to a max of 10) to prevent rate limits.
+   - Jitter is enabled with randomized delays between `1.0s` and `3.5s`.
+   - **Path Mutation** is automatically enabled for all subsequent web scans.
+3. **Automated Cloudflare Turnstile/UAM Bypass** — If Cloudflare is detected (and `camoufox` dependencies are active), CSCAN automatically launches a fingerprint-hardened background browser to solve the security challenge, extracts the valid `cf_clearance` cookie, and injects it along with the matching user-agent directly into the active stealth session.
+4. **Adaptive Backoff & Mutant Retry Recovery** — If a web vulnerability scanning step returns blocked responses (`403` or `429` status codes), CSCAN backs off automatically (sleeping up to 12s) and automatically retries the failed step using a restructured, mutated path set and further reduced thread concurrency.
+
+You do not need to configure anything. Just select Option `17` from the menu, and CSCAN will handle WAF identification and stealth parameters automatically.
 
 ---
 
