@@ -145,6 +145,45 @@ def whois_lookup(target: str) -> dict:
         return {}
 
 
+def _crtsh_subdomains(domain: str) -> list:
+    """
+    FIX #7: Query crt.sh Certificate Transparency logs for passively known subdomains.
+    Returns a list of unique FQDNs found in issued certificates.
+    """
+    try:
+        r = requests.get(
+            f"https://crt.sh/?q=%25.{domain}&output=json",
+            timeout=12,
+            headers={'User-Agent': 'Mozilla/5.0 (compatible; CSCAN/2.1)'},
+        )
+        if r.status_code != 200:
+            return []
+        entries = r.json()
+        names = set()
+        for entry in entries:
+            raw = entry.get('name_value', '')
+            for n in raw.split('\n'):
+                n = n.strip().lstrip('*.')
+                if n and n.endswith(domain) and n != domain:
+                    names.add(n.lower())
+        return sorted(names)
+    except Exception:
+        return []
+
+
+def _detect_wildcard(domain: str) -> str | None:
+    """
+    FIX #7: Detect wildcard DNS by resolving a random unlikely subdomain.
+    Returns the wildcard IP if one exists, else None.
+    """
+    import random, string
+    probe = ''.join(random.choices(string.ascii_lowercase, k=16)) + '.' + domain
+    try:
+        return socket.gethostbyname(probe)
+    except Exception:
+        return None
+
+
 # ── Subdomain Enumerator ──────────────────────────────────────────────────────
 def subdomain_enum(target: str, wordlist: list = None, workers: int = 30) -> list:
     section("SUBDOMAIN ENUMERATOR")
@@ -154,35 +193,82 @@ def subdomain_enum(target: str, wordlist: list = None, workers: int = 30) -> lis
 
     wl = wordlist or SUBDOMAIN_WORDLIST
     info(f"Base domain   : {BR}{W}{hostname}{RS}")
-    info(f"Wordlist size : {BR}{W}{len(wl)}{RS} subdomains\n")
+    info(f"Wordlist size : {BR}{W}{len(wl)}{RS} subdomains")
+
+    # ── FIX #7: Wildcard detection ────────────────────────────────────────────
+    info("Checking for wildcard DNS...")
+    wildcard_ip = _detect_wildcard(hostname)
+    if wildcard_ip:
+        warn(f"Wildcard DNS detected! All subdomains resolve to {BR}{Y}{wildcard_ip}{RS}")
+        warn("Wordlist bruteforce results will be UNRELIABLE — skipping DNS phase.")
+        warn("Relying on Certificate Transparency logs only.")
+    else:
+        ok("No wildcard DNS — bruteforce results will be accurate.")
+    print()
 
     found = []
     lock  = __import__('threading').Lock()
 
-    def check_sub(sub):
-        fqdn = f"{sub}.{hostname}"
-        try:
-            ip = socket.gethostbyname(fqdn)
-            with lock:
-                found.append((fqdn, ip))
-                print(f"  {BR}{G}[FOUND]{RS}  {BR}{W}{fqdn:<40}{RS}  {G}{ip}{RS}")
-        except Exception:
-            pass
+    # ── Phase 1: wordlist DNS bruteforce (skip if wildcard detected) ───────────
+    if not wildcard_ip:
+        info(f"Phase 1/2 — DNS bruteforce ({len(wl)} entries)...\n")
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(check_sub, s) for s in wl]
-        for i, _ in enumerate(as_completed(futures), 1):
-            progress_bar(i, len(wl), 'scanning subdomains')
+        def check_sub(sub):
+            fqdn = f"{sub}.{hostname}"
+            try:
+                ip = socket.gethostbyname(fqdn)
+                with lock:
+                    found.append((fqdn, ip))
+                    print(f"  {BR}{G}[FOUND]{RS}  {BR}{W}{fqdn:<40}{RS}  {G}{ip}{RS}")
+            except Exception:
+                pass
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = [ex.submit(check_sub, s) for s in wl]
+            for i, _ in enumerate(as_completed(futures), 1):
+                progress_bar(i, len(wl), 'DNS bruteforce')
+        print()
+    else:
+        info("Phase 1/2 — DNS bruteforce skipped (wildcard active).")
+
+    # ── Phase 2: Certificate Transparency (crt.sh) passive lookup ──────────
+    info(f"Phase 2/2 — Certificate Transparency logs (crt.sh)...")
+    ct_names = _crtsh_subdomains(hostname)
+    if ct_names:
+        ok(f"crt.sh returned {len(ct_names)} certificate entry(ies).")
+        existing_fqdns = {f for f, _ in found}
+        ct_new = 0
+        for fqdn in ct_names:
+            if fqdn in existing_fqdns:
+                continue
+            try:
+                ip = socket.gethostbyname(fqdn)
+                found.append((fqdn, ip))
+                existing_fqdns.add(fqdn)
+                print(f"  {BR}{M}[CT-LOG]{RS} {BR}{W}{fqdn:<40}{RS}  {G}{ip}{RS}")
+                ct_new += 1
+            except Exception:
+                # Still report the name even if it doesn't currently resolve
+                found.append((fqdn, 'unresolved'))
+                existing_fqdns.add(fqdn)
+                print(f"  {BR}{Y}[CT-LOG]{RS} {DM}{fqdn:<40}  (does not resolve currently){RS}")
+                ct_new += 1
+        ok(f"CT logs added {ct_new} unique subdomain(s).")
+    else:
+        warn("crt.sh returned no results (API may be rate-limited or domain is new).")
 
     print()
     if found:
-        ok(f"Found {len(found)} subdomain(s).")
+        ok(f"Total: {len(found)} subdomain(s) discovered.")
     else:
         warn("No subdomains discovered.")
     return found
 
 
 # ── GeoIP ─────────────────────────────────────────────────────────────────────
+# Known Cloudflare AS numbers — GeoIP on these returns CF's infra, not origin
+_CLOUDFLARE_ASN = {'AS13335', 'AS209242'}
+
 def geoip_lookup(target: str) -> dict:
     section("GEOIP & LOCATION TRACKER")
     hostname = extract_hostname(target)
@@ -196,12 +282,22 @@ def geoip_lookup(target: str) -> dict:
     info(f"Looking up: {BR}{W}{ip}{RS}\n")
 
     try:
+        # ip-api.com free tier requires HTTP (HTTPS returns 403)
         if _stealth_session:
             r = _stealth_session.get(f"http://ip-api.com/json/{ip}?fields=66846719", timeout=8)
         else:
             r = requests.get(f"http://ip-api.com/json/{ip}?fields=66846719", timeout=8)
         d = r.json()
         if d.get('status') == 'success':
+            # Detect Cloudflare edge IP
+            asn = d.get('as', '')
+            is_cf_edge = any(cf in asn for cf in _CLOUDFLARE_ASN)
+            if is_cf_edge:
+                warn(f"This IP ({ip}) belongs to {BR}{Y}Cloudflare ({asn}){RS}")
+                warn("GeoIP shows Cloudflare's network location, NOT the origin server.")
+                info("Tip: Check MX records or use Shodan/Censys to find the real origin IP.")
+                print()
+
             rows = [
                 ('IP Address',   d.get('query',       'N/A')),
                 ('Country',      d.get('country',     'N/A')),
@@ -213,12 +309,12 @@ def geoip_lookup(target: str) -> dict:
                 ('Timezone',     d.get('timezone',    'N/A')),
                 ('ISP',          d.get('isp',         'N/A')),
                 ('Organization', d.get('org',         'N/A')),
-                ('ASN',          d.get('as',          'N/A')),
+                ('ASN',          asn),
                 ('Mobile?',      d.get('mobile',      'N/A')),
                 ('Proxy/VPN?',   d.get('proxy',       'N/A')),
             ]
             for label, val in rows:
-                colour = R if str(val) == 'True' else W
+                colour = R if str(val) == 'True' else (Y if is_cf_edge and label == 'ASN' else W)
                 print(f"  {DM}{C}◈{RS}  {BR}{Y}{label:<14}{RS}  {colour}{val}{RS}")
             return d
         else:

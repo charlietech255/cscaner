@@ -119,31 +119,147 @@ def _expand_mutations(words: list) -> list:
     return expanded
 
 
+# ── FIX #3: Content-severity patterns for 200-response grading ───────────────
+# A 200 on /admin is very different from a 200 exposing a raw .env file.
+# These patterns check the BODY to assign a severity tier.
+_CRITICAL_CONTENT_PATTERNS = [
+    # Environment / secret files
+    (r'(?i)(DB_PASSWORD|DB_PASS|DATABASE_PASSWORD|SECRET_KEY|APP_KEY|AWS_SECRET|PRIVATE_KEY|API_KEY|ACCESS_TOKEN|AUTH_TOKEN)\s*[=:]', 'Secret key/credential in response'),
+    (r'(?i)-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----', 'Private key material exposed'),
+    (r'(?i)(password|passwd)\s*=\s*[\'"][^\'"]{3,}[\'"]', 'Hardcoded password in response'),
+    # Source / config dumps
+    (r'(?i)<\?php', 'PHP source code returned (not executed)'),
+    (r'(?i)\[database\]|\[mysql\]|\[postgresql\]', 'Database config section exposed'),
+    # Stack traces / debug info
+    (r'(?i)(stack trace|Traceback \(most recent call|at .+\.php line \d|Debug mode is ON|Laravel debug)', 'Framework stack trace / debug mode'),
+    (r'(?i)(SQLException|ORA-\d{5}|mysql_fetch|pg_query|SQLSTATE)', 'Database error / SQL exception leaked'),
+    # Git internals
+    (r'(?i)ref: refs/heads/', '.git/HEAD or git ref exposed'),
+    (r'(?i)\[core\]\s*repositoryformatversion', '.git/config exposed'),
+    # Directory listing
+    (r'(?i)(index of /|directory listing for|alt="\[dir\]")', 'Directory listing enabled'),
+]
+
+_HIGH_CONTENT_PATTERNS = [
+    (r'(?i)(admin|administrator|root|superuser)\s*:\s*\w+', 'Admin credential pattern in response'),
+    (r'(?i)(mongodb|redis|memcache)://[\w:@./]+', 'Database connection string exposed'),
+    (r'(?i)phpinfo\(\)', 'phpinfo() output returned'),
+    (r'(?i)uid=\d+\(\w+\)', 'Unix /etc/passwd or command output in response'),
+    (r'(?i)eval\(base64_decode', 'Obfuscated/backdoor PHP pattern'),
+]
+
+_INFO_CONTENT_PATTERNS = [
+    (r'(?i)(version|release|build)\s*[=:]?\s*v?\d+\.\d+', 'Version information in response'),
+    (r'(?i)(todo|fixme|hack|xxx|debug|test this)', 'Dev comment / TODO in response'),
+]
+
+
+def _grade_200_response(path: str, body: str, size: int) -> tuple:
+    """
+    Inspect the body of a 200 response and return
+    (severity, label, matched_reason) where severity is
+    'critical', 'high', 'info', or None (skip — likely a real page).
+    """
+    # Empty or near-empty body = likely a redirect trap or stub
+    if size < 10:
+        return (None, None, None)
+
+    body_sample = body[:8000]  # only scan first 8 KB to stay fast
+
+    for pattern, reason in _CRITICAL_CONTENT_PATTERNS:
+        if re.search(pattern, body_sample):
+            return ('critical', reason, pattern)
+
+    for pattern, reason in _HIGH_CONTENT_PATTERNS:
+        if re.search(pattern, body_sample):
+            return ('high', reason, pattern)
+
+    # Paths that are inherently sensitive even with generic 200 bodies
+    ALWAYS_CRITICAL_PATHS = {
+        '/.git/config', '/.git/HEAD', '/.env', '/.env.local', '/.env.production',
+        '/wp-config.php', '/config.php', '/configuration.php', '/settings.php',
+        '/web.config', '/phpinfo.php', '/info.php', '/server-status', '/server-info',
+        '/backup.sql', '/database.sql', '/db_backup.sql', '/secrets.txt',
+        '/credentials.txt',
+    }
+    if path in ALWAYS_CRITICAL_PATHS:
+        return ('critical', 'Inherently sensitive path returned 200', '')
+
+    for pattern, reason in _INFO_CONTENT_PATTERNS:
+        if re.search(pattern, body_sample):
+            return ('info', reason, pattern)
+
+    return (None, None, None)  # looks like a normal page — skip
+
+
+def _silent_cms_detect(target: str, use_ssl: bool = False) -> list:
+    """Helper to passively identify CMS/tech before running intrusive scans."""
+    base = _build_url(target, use_ssl)
+    detected = []
+    try:
+        r = _get(base, timeout=8)
+        if not r: return []
+        body = r.text.lower()
+        headers = {k.lower(): v.lower() for k, v in r.headers.items()}
+        for tech, sigs in CMS_SIGS.items():
+            for sig in sigs:
+                if sig.lower() in body or sig.lower() in str(headers):
+                    detected.append(tech)
+                    break
+        return detected
+    except Exception:
+        return []
+
 # ── Web Vulnerability Scanner ─────────────────────────────────────────────────
 def web_vuln_scan(target: str, use_ssl: bool = False, mutate: bool = False, workers: int = 20) -> dict:
     section("WEB VULNERABILITY SCANNER")
     base = _build_url(target, use_ssl)
     info(f"Target        : {BR}{W}{base}{RS}")
-    paths_to_check = SENSITIVE_PATHS
+    
+    # FIX #2: CMS Gate — identify tech to prevent spamming WP paths on non-WP sites
+    detected_tech = _silent_cms_detect(target, use_ssl)
+    if detected_tech:
+        info(f"Tech Detected : {', '.join(detected_tech)}")
+    else:
+        info(f"Tech Detected : {DM}None (using standard paths only){RS}")
+
+    filtered_paths = []
+    for p in SENSITIVE_PATHS:
+        pl = p.lower()
+        if ('/wp-' in pl or 'wordpress' in pl) and 'WordPress' not in detected_tech:
+            continue
+        if 'joomla' in pl and 'Joomla' not in detected_tech:
+            continue
+        filtered_paths.append(p)
+
+    paths_to_check = filtered_paths
     if mutate:
         info("Path mutation ENABLED — each path gets 1 alternate variant.")
-        paths_to_check = _expand_mutations(SENSITIVE_PATHS)
-    info(f"Probing       : {len(paths_to_check)} sensitive paths\n")
+        paths_to_check = _expand_mutations(filtered_paths)
+    
+    info(f"Probing       : {len(paths_to_check)} sensitive paths")
+    info(f"Content-aware : ON — responses graded by body analysis, not just status code\n")
 
-    findings = {'exposed': [], 'forbidden': [], 'auth_required': []}
+    # FIX #3: findings now tracks severity, not just category
+    findings = {'critical': [], 'high': [], 'forbidden': [], 'auth_required': [], 'info': []}
 
     def check(path):
         r = _get(base, path)
         if r is None:
-            return
+            return None
         if r.status_code == 200:
-            # Check for directory listing in body
-            is_listing = any(x in r.text.lower() for x in ['index of /', 'directory listing for', 'alt="[dir]"'])
-            return ('exposed', path, r.status_code, len(r.content), is_listing)
+            severity, reason, _ = _grade_200_response(path, r.text, len(r.content))
+            if severity:
+                return (severity, path, len(r.content), reason)
+            return None  # 200 but looks like a normal page — ignore
         elif r.status_code == 403:
-            return ('forbidden', path, r.status_code, 0, False)
+            # Check if this is a CDN/WAF blocking the request entirely
+            server_hdr = r.headers.get('Server', '').lower()
+            if any(cdn in server_hdr for cdn in ['cloudflare', 'akamai', 'sucuri', 'fastly']):
+                return ('info', path, 0, 'WAF Block (CDN Edge)')
+            return ('forbidden', path, 0, 'Access denied (403 Forbidden)')
         elif r.status_code == 401:
-            return ('auth_required', path, r.status_code, 0, False)
+            return ('auth_required', path, 0, 'HTTP authentication required')
         return None
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -154,31 +270,42 @@ def web_vuln_scan(target: str, use_ssl: bool = False, mutate: bool = False, work
             progress_bar(done, len(paths_to_check), 'probing paths')
             res = fut.result()
             if res:
-                kind, path, code, size, is_listing = res
-                findings[kind].append((path, size, is_listing))
+                severity, path, size, reason = res
+                findings[severity].append((path, size, reason))
 
     print('\n')
-    # Display exposed (critical)
-    for path, size, is_listing in findings['exposed']:
-        pfx = "DIR LISTING: " if is_listing else "EXPOSED: "
-        critical(f"{pfx}{base}{path}  [{size} bytes]")
-
-    for path, _, _ in findings['forbidden']:
-        warn(f"Forbidden (may be internal): {base}{path}")
-
-    for path, _, _ in findings['auth_required']:
-        info(f"Auth Required: {base}{path}")
+    for path, size, reason in findings['critical']:
+        critical(f"CRITICAL: {base}{path}  [{size}B]  — {reason}")
+    for path, size, reason in findings['high']:
+        alert(f"HIGH:     {base}{path}  [{size}B]  — {reason}")
+    for path, _, reason in findings['forbidden']:
+        warn(f"Forbidden : {base}{path}  — {reason}")
+    for path, _, reason in findings['auth_required']:
+        info(f"Auth Req  : {base}{path}  — {reason}")
+    for path, _, reason in findings['info']:
+        info(f"Info      : {base}{path}  — {reason}")
 
     divider()
-    total = sum(len(v) for v in findings.values())
-    if findings['exposed']:
-        alert(f"{len(findings['exposed'])} path(s) are publicly EXPOSED — immediate action needed!")
+    n_crit = len(findings['critical'])
+    n_high = len(findings['high'])
+    total  = sum(len(v) for v in findings.values())
+    if n_crit:
+        alert(f"{n_crit} CRITICAL exposure(s) detected — immediate action needed!")
         info("Fix: Remove sensitive files or restrict access via .htaccess / nginx config")
+    elif n_high:
+        warn(f"{n_high} HIGH-severity path(s) found — review and remediate.")
     elif total == 0:
         ok("No sensitive paths exposed — good hygiene!")
     else:
-        ok(f"No critical exposures. {total} non-200 responses noted.")
+        ok(f"No critical exposures. {total} non-200 or info responses noted.")
 
+    if findings['forbidden'] or findings['auth_required']:
+        print()
+        info(f"{BR}{M}Risk Note:{RS} Forbidden (403) and Auth (401) paths suggest hidden")
+        info("           administration panels or sensitive endpoints.")
+
+    # Backward-compat: expose list for auto_scan summary
+    findings['exposed'] = findings['critical'] + findings['high']
     return findings
 
 
@@ -209,8 +336,13 @@ def http_header_audit(target: str, use_ssl: bool = False) -> dict:
     leaks = []
     for hdr in INFO_LEAK_HEADERS:
         if hdr in headers:
-            warn(f"{hdr:<20} = {Y}{headers[hdr]}{RS}")
-            leaks.append((hdr, headers[hdr]))
+            val = headers[hdr]
+            # Ignore expected CDN headers so we don't falsely flag them as "leaks"
+            if hdr.lower() == 'server' and any(cdn in val.lower() for cdn in ['cloudflare', 'akamai', 'cloudfront', 'fastly', 'sucuri']):
+                ok(f"{hdr:<20} = {Y}{val}{RS}  {DM}(Expected CDN){RS}")
+            else:
+                warn(f"{hdr:<20} = {Y}{val}{RS}")
+                leaks.append((hdr, val))
         else:
             ok(f"{hdr:<20} {DM}not present (good){RS}")
 
@@ -321,98 +453,151 @@ def cms_detect(target: str, use_ssl: bool = False) -> list:
     return list(set(detected))
 
 
-# ── Enhanced CVE Database ────────────────────────────────────────────────────────
+# ── FIX #4: CVE Database updated to 2024 ─────────────────────────────────────
 CVE_DATABASE = {
-    # Web Servers
+    # ── Web Servers ───────────────────────────────────────────────────────────
     "Apache": {
         "versions": {
+            # 2024
+            "2.4.58": ["CVE-2024-38473", "CVE-2024-38474", "CVE-2024-38475"],
+            "2.4.57": ["CVE-2023-45802"],
+            "2.4.56": ["CVE-2023-27522", "CVE-2023-25690"],
+            "2.4.55": ["CVE-2023-27522"],
+            "2.4.54": ["CVE-2022-37436", "CVE-2022-36760"],
+            "2.4.53": ["CVE-2022-26377", "CVE-2022-28614", "CVE-2022-28615"],
+            "2.4.51": ["CVE-2021-44224", "CVE-2021-44790"],
+            # 2021
             "2.4.50": ["CVE-2021-42013", "CVE-2021-41773"],
             "2.4.49": ["CVE-2021-41773"],
             "2.4.48": ["CVE-2021-40438"],
             "2.4.46": ["CVE-2021-30641", "CVE-2021-26690"],
-            "2.4.43": ["CVE-2020-11984", "CVE-2020-11993"]
+            "2.4.43": ["CVE-2020-11984", "CVE-2020-11993"],
         },
-        "pattern": r"Apache/(\d+\.\d+\.\d+)"
+        "pattern": r"Apache/(\d+\.\d+\.\d+)",
     },
     "Nginx": {
         "versions": {
+            # 2024
+            "1.25.3": ["CVE-2024-7347"],
+            "1.25.0": ["CVE-2023-44487"],  # HTTP/2 Rapid Reset
+            "1.23.4": ["CVE-2022-41741", "CVE-2022-41742"],
+            "1.22.0": ["CVE-2022-41741"],
+            # 2021
             "1.21.0": ["CVE-2021-23017"],
             "1.19.10": ["CVE-2020-12440"],
             "1.17.7": ["CVE-2019-20372"],
-            "1.16.1": ["CVE-2018-16845", "CVE-2018-16844"]
+            "1.16.1": ["CVE-2018-16845", "CVE-2018-16844"],
         },
-        "pattern": r"nginx/(\d+\.\d+\.\d+)"
+        "pattern": r"nginx/(\d+\.\d+\.\d+)",
     },
     "IIS": {
         "versions": {
-            "10.0": ["CVE-2021-31166", "CVE-2020-0645"],
-            "8.5": ["CVE-2015-1635"]
+            "10.0": ["CVE-2022-21907", "CVE-2021-31166", "CVE-2020-0645"],
+            "8.5":  ["CVE-2015-1635"],
         },
-        "pattern": r"Microsoft-IIS/(\d+\.\d+)"
+        "pattern": r"Microsoft-IIS/(\d+\.\d+)",
     },
-    # Databases
+    # ── Databases ────────────────────────────────────────────────────────────
     "MySQL": {
         "versions": {
+            "8.0.35": ["CVE-2024-20961", "CVE-2024-20962"],
+            "8.0.33": ["CVE-2023-21980", "CVE-2023-22005"],
+            "8.0.28": ["CVE-2022-21592"],
             "8.0.25": ["CVE-2021-2144"],
+            "5.7.38": ["CVE-2022-21589"],
             "5.7.34": ["CVE-2021-2156"],
             "5.6.51": ["CVE-2021-2154"],
-            "5.5.62": ["CVE-2019-2503"]
         },
-        "pattern": r"MySQL[ -](\d+\.\d+\.\d+)"
+        "pattern": r"MySQL[ -](\d+\.\d+\.\d+)",
     },
     "PostgreSQL": {
         "versions": {
+            "16.0": ["CVE-2023-5868", "CVE-2023-5869", "CVE-2023-5870"],
+            "15.4": ["CVE-2023-39417"],
+            "14.8": ["CVE-2023-2454"],
             "13.3": ["CVE-2021-32027"],
             "12.7": ["CVE-2021-32028"],
-            "11.12": ["CVE-2021-32029"],
-            "10.17": ["CVE-2021-32030"]
         },
-        "pattern": r"PostgreSQL (\d+\.\d+\.\d+)"
+        "pattern": r"PostgreSQL (\d+\.\d+(?:\.\d+)?)",
     },
     "MongoDB": {
         "versions": {
-            "4.4.6": ["CVE-2021-20330"],
+            "6.0.6": ["CVE-2023-0437"],
+            "5.0.14": ["CVE-2022-24999"],
+            "4.4.6":  ["CVE-2021-20330"],
             "4.2.12": ["CVE-2021-20329"],
-            "4.0.23": ["CVE-2021-20328"]
         },
-        "pattern": r"MongoDB (\d+\.\d+\.\d+)"
+        "pattern": r"MongoDB (\d+\.\d+\.\d+)",
     },
-    # Programming Languages
+    # ── Runtime / Languages ───────────────────────────────────────────────────
     "PHP": {
         "versions": {
+            "8.3.6":  ["CVE-2024-4577"],
+            "8.2.18": ["CVE-2024-4577", "CVE-2024-2756"],
+            "8.1.28": ["CVE-2024-4577"],
+            "8.0.28": ["CVE-2022-31628", "CVE-2022-31629"],
+            "7.4.30": ["CVE-2022-31625"],
             "7.4.21": ["CVE-2021-21703"],
             "7.3.28": ["CVE-2021-21702"],
-            "7.2.34": ["CVE-2020-7069"],
-            "5.6.40": ["CVE-2019-11043"]
+            "5.6.40": ["CVE-2019-11043"],
         },
-        "pattern": r"PHP/(\d+\.\d+\.\d+)"
+        "pattern": r"PHP/(\d+\.\d+\.\d+)",
     },
-    # CMS
+    # ── CMS ───────────────────────────────────────────────────────────────────
     "WordPress": {
         "versions": {
-            "5.8": ["CVE-2021-29447"],
-            "5.7": ["CVE-2021-29445"],
-            "5.6": ["CVE-2021-29442"],
-            "5.5": ["CVE-2020-28032"]
+            "6.4.2": ["CVE-2024-6386"],
+            "6.3.2": ["CVE-2023-38000"],
+            "6.2.2": ["CVE-2023-22622"],
+            "6.1.1": ["CVE-2023-2745"],
+            "5.9.5": ["CVE-2022-43504", "CVE-2022-43497"],
+            "5.8":   ["CVE-2021-29447"],
+            "5.7":   ["CVE-2021-29445"],
+            "5.6":   ["CVE-2021-29442"],
         },
-        "pattern": r"WordPress (\d+\.\d+(?:\.\d+)?)"
+        "pattern": r"WordPress (\d+\.\d+(?:\.\d+)?)",
     },
     "Joomla": {
         "versions": {
+            "5.0.2":  ["CVE-2024-21726"],
+            "4.3.3":  ["CVE-2023-40626"],
+            "4.2.6":  ["CVE-2023-23752"],
+            "3.10.11": ["CVE-2022-27912"],
             "3.9.27": ["CVE-2021-23132"],
-            "3.8.13": ["CVE-2020-10225"],
-            "3.7.0": ["CVE-2017-8917"]
+            "3.7.0":  ["CVE-2017-8917"],
         },
-        "pattern": r"Joomla! (\d+\.\d+\.\d+)"
+        "pattern": r"Joomla!? (\d+\.\d+\.\d+)",
     },
     "Drupal": {
         "versions": {
-            "9.2": ["CVE-2021-29403"],
-            "8.9": ["CVE-2020-13671"],
-            "7.69": ["CVE-2019-6340"]
+            "10.1.5": ["CVE-2023-5256"],
+            "10.0.10": ["CVE-2023-31250"],
+            "9.5.10": ["CVE-2023-31250"],
+            "9.4.9":  ["CVE-2022-39261"],
+            "9.2":    ["CVE-2021-29403"],
+            "8.9":    ["CVE-2020-13671"],
+            "7.69":   ["CVE-2019-6340"],
         },
-        "pattern": r"Drupal (\d+\.\d+(?:\.\d+)?)"
-    }
+        "pattern": r"Drupal (\d+\.\d+(?:\.\d+)?)",
+    },
+    # ── Additional common server software ────────────────────────────────────
+    "OpenSSH": {
+        "versions": {
+            "9.7": ["CVE-2024-6387"],   # regreSSHion — remote code exec
+            "9.2": ["CVE-2023-38408"],
+            "8.9": ["CVE-2023-28531"],
+        },
+        "pattern": r"OpenSSH[_/ ](\d+\.\d+(?:p\d+)?)",
+    },
+    "OpenSSL": {
+        "versions": {
+            "3.1.4": ["CVE-2024-0727"],
+            "3.0.8": ["CVE-2023-0286", "CVE-2022-4304"],
+            "1.1.1s": ["CVE-2023-0286"],
+            "1.1.1n": ["CVE-2022-0778"],
+        },
+        "pattern": r"OpenSSL/(\d+\.\d+\.\d+\w*)",
+    },
 }
 
 VERSION_PATTERNS = {

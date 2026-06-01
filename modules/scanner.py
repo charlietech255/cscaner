@@ -16,6 +16,14 @@ from modules.ui import (
     print_table, progress_bar, G, R, Y, C, M, W, B, BR, DM, RS
 )
 
+# ── FIX #6: Custom timeout override ───────────────────────────────────────────────
+_custom_timeout: float | None = None   # overrides timing-profile timeout when set
+
+def set_scan_timeout(t: float | None):
+    """Called by cscan._apply_stealth() to push user-configured timeout override."""
+    global _custom_timeout
+    _custom_timeout = t
+
 # ── define ports zote muhimu ──────────────────────────────────────────────────────────
 COMMON_PORTS = {
     21:    'FTP',
@@ -62,7 +70,9 @@ def _probe_port(ip: str, port: int, timeout: float = TIMEOUT, delay: float = 0.0
     from modules.stealth import stealth_banner_probe
     if delay > 0:
         time.sleep(delay)
-    return stealth_banner_probe(ip, port, timeout=timeout)
+    # FIX #6: honour user-configured timeout override
+    effective_timeout = _custom_timeout if _custom_timeout is not None else timeout
+    return stealth_banner_probe(ip, port, timeout=effective_timeout)
 
 
 def _display_port(port, banner, service):
@@ -216,7 +226,10 @@ def ssl_inspect(target: str, port: int = 443) -> dict:
             socket.create_connection((hostname, port), timeout=8),
             server_hostname=hostname
         )
-        cert = conn.getpeercert()
+        cert   = conn.getpeercert()
+        # Read protocol and cipher BEFORE closing the connection
+        tls_ver = conn.version()          # e.g. 'TLSv1.3'
+        cipher  = conn.cipher()           # (name, protocol, bits)
         conn.close()
 
         fields = {
@@ -227,7 +240,9 @@ def ssl_inspect(target: str, port: int = 443) -> dict:
             'Not Before':     cert.get('notBefore', 'N/A'),
             'Not After':      cert.get('notAfter', 'N/A'),
             'SANs':           [v for t, v in cert.get('subjectAltName', []) if t == 'DNS'],
-            'Protocol':       conn.version() if hasattr(conn, 'version') else 'N/A',
+            'Protocol':       tls_ver or 'N/A',
+            'Cipher':         cipher[0] if cipher else 'N/A',
+            'Cipher Bits':    cipher[2] if cipher else 'N/A',
         }
 
         # Parse expiry
@@ -247,6 +262,7 @@ def ssl_inspect(target: str, port: int = 443) -> dict:
             ('Days Left',    f"{exp_col}{days} days{RS}"),
             ('Serial No.',   fields['Serial']),
             ('TLS Version',  fields['Protocol']),
+            ('Cipher Suite', f"{fields['Cipher']}  ({fields['Cipher Bits']} bit)"),
         ]
         for label, val in labels:
             print(f"  {DM}◈{RS}  {BR}{Y}{label:<14}{RS}  {W}{val}{RS}")
@@ -275,17 +291,8 @@ def ssl_inspect(target: str, port: int = 443) -> dict:
     return {}
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+# FIX #12: resolve_host is the single canonical resolver in modules.utils.
+# _resolve kept as an alias so all call sites in this file work unchanged.
 def _resolve(target: str) -> str:
-    from urllib.parse import urlparse
-    if '://' in target:
-        hostname = urlparse(target).hostname
-    elif '/' in target:
-        hostname = target.split('/')[0]
-    else:
-        hostname = target
-    try:
-        return socket.gethostbyname(hostname)
-    except Exception:
-        alert(f"Cannot resolve {hostname}")
-        return None
+    from modules.utils import resolve_host
+    return resolve_host(target)

@@ -48,14 +48,29 @@ WAF_SIGNATURES = {
     "incapsula":  ["incap_ses", "visid_incap"],
 }
 
-# ── Timing profiles (like nmap -T1..T5) ─────────────────────────────────────
+# ── FIX #15: Calculate insane-mode workers from OS file-descriptor limit ──────
+# Each socket thread consumes ~2 FDs. 150 threads on ulimit -n=1024 risks EMFILE.
+# Cap at 1/8 of the soft FD limit (floor: 50, ceiling: 150).
+def _fd_safe_max_workers(default: int = 100) -> int:
+    try:
+        import resource
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft > 0:
+            return max(50, min(150, soft // 8))
+    except Exception:
+        pass
+    return default
+
+_INSANE_WORKERS = _fd_safe_max_workers()
+
+# ── Timing profiles (like nmap -T1..T5) ──────────────────────────────────────
 TIMING_PROFILES = {
-    "paranoid":   {"workers": 1,   "timeout": 4.0, "delay": 3.0},
-    "sneaky":     {"workers": 5,   "timeout": 3.5, "delay": 1.5},
-    "polite":     {"workers": 10,  "timeout": 3.0, "delay": 0.8},
-    "normal":     {"workers": 60,  "timeout": 2.0, "delay": 0.0},
-    "aggressive": {"workers": 100, "timeout": 1.5, "delay": 0.0},
-    "insane":     {"workers": 150, "timeout": 1.0, "delay": 0.0},
+    "paranoid":   {"workers": 1,               "timeout": 4.0, "delay": 3.0},
+    "sneaky":     {"workers": 5,               "timeout": 3.5, "delay": 1.5},
+    "polite":     {"workers": 10,              "timeout": 3.0, "delay": 0.8},
+    "normal":     {"workers": 60,              "timeout": 2.0, "delay": 0.0},
+    "aggressive": {"workers": 100,             "timeout": 1.5, "delay": 0.0},
+    "insane":     {"workers": _INSANE_WORKERS, "timeout": 1.0, "delay": 0.0},
 }
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -279,9 +294,18 @@ def try_nmap_scan(target: str, ports: list, timing: str = "normal", syn: bool = 
 
 def stealth_banner_probe(ip: str, port: int, timeout: float = 2.0) -> tuple:
     """
-    TCP connect with randomized/generic banner probes instead of scanner signatures.
+    TCP connect with randomized/generic banner probes.
+    FIX #11: auto-detects IPv6 addresses and uses AF_INET6 socket.
     Returns (port, is_open, banner).
     """
+    import ipaddress
+
+    # Detect address family
+    try:
+        af = socket.AF_INET6 if isinstance(ipaddress.ip_address(ip), ipaddress.IPv6Address) else socket.AF_INET
+    except ValueError:
+        af = socket.AF_INET
+
     generic_probes = {
         21:  b"USER anonymous\r\n",
         22:  b"SSH-2.0-OpenSSH_8.9\r\n",
@@ -291,9 +315,11 @@ def stealth_banner_probe(ip: str, port: int, timeout: float = 2.0) -> tuple:
         143: b"A001 CAPABILITY\r\n",
     }
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock = socket.socket(af, socket.SOCK_STREAM)
         sock.settimeout(timeout)
-        if sock.connect_ex((ip, port)) == 0:
+        # IPv6 connect tuple needs (host, port, flowinfo=0, scope_id=0)
+        addr = (ip, port, 0, 0) if af == socket.AF_INET6 else (ip, port)
+        if sock.connect_ex(addr) == 0:
             banner = ""
             try:
                 sock.settimeout(timeout + 1)

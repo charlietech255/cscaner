@@ -334,13 +334,25 @@ _STRINGS = {
     "sh_auto":    {"en": "AUTOMATION",      "sw": "AUTOMATION"},
     "sh_ai":      {"en": "AI ANALYSIS",   "sw": "AI ANALYSIS"},
     "sh_stealth": {"en": "STEALTH & OPSEC", "sw": "STEALTH & OPSEC"},
-    "m_nav_hint": {"en": "T=Target  K=AI Key  S=Stealth", "sw": "T=Lengo   K=key ya AI  S=Stealth"},
+    "m_nav_hint": {"en": "T=Target  K=AI Key  S=Stealth  L=Language",
+                   "sw": "T=Lengo   K=key ya AI  S=Stealth  L=Lugha"},
+
+    # ── Language toggle (in-session) ────────────────────────────────────────────
+    "lang_toggle_title":  {"en": "LANGUAGE / LUGHA",
+                           "sw": "LUGHA / LANGUAGE"},
+    "lang_toggled_en":    {"en": "Language switched to English.",
+                           "sw": "Lugha imebadilishwa kwenda Kiingereza."},
+    "lang_toggled_sw":    {"en": "Language switched to Kiswahili.",
+                           "sw": "Lugha imebadilishwa kwenda Kiswahili."},
+    "lang_current":       {"en": "Current language : English",
+                           "sw": "Lugha ya sasa    : Kiswahili"},
 }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  PUBLIC API
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def T(key: str, **kwargs) -> str:
     """

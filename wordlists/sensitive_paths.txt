@@ -296,3 +296,190 @@
 /settings.json
 /secrets.txt
 /credentials.txt
+
+# Docker / Kubernetes
+/.dockerenv
+/docker-compose.yml
+/docker-compose.yaml
+/.docker/config.json
+/Dockerfile
+/Makefile
+/.kube/config
+/k8s/
+/kubernetes/
+/helm/
+
+# Cloud provider credentials / metadata
+/.aws/credentials
+/.aws/config
+/.gcloud/credentials.db
+/.azure/credentials
+/credentials.json
+/service-account.json
+/serviceaccount.json
+/cloud.json
+
+# Spring Boot Actuator (critical exposure risk)
+/actuator
+/actuator/env
+/actuator/health
+/actuator/info
+/actuator/metrics
+/actuator/beans
+/actuator/mappings
+/actuator/threaddump
+/actuator/heapdump
+/actuator/loggers
+/actuator/httptrace
+/actuator/scheduledtasks
+/h2-console
+/jolokia
+/jolokia/exec
+/trace
+/autoconfig
+
+# Node.js / JavaScript apps
+/.npmrc
+/.yarn/
+/.yarnrc
+/npm-debug.log
+/yarn-error.log
+/.nvmrc
+/nodemon.json
+/pm2.config.js
+/ecosystem.config.js
+
+# Python apps
+/requirements.txt
+/Pipfile
+/Pipfile.lock
+/pyproject.toml
+/setup.py
+/setup.cfg
+/.python-version
+
+# Ruby / Rails
+/Gemfile
+/Gemfile.lock
+/.ruby-version
+/config/database.yml
+/config/secrets.yml
+/config/master.key
+
+# Go
+/go.mod
+/go.sum
+
+# Java / Maven / Gradle
+/pom.xml
+/build.gradle
+/settings.gradle
+/WEB-INF/web.xml
+/WEB-INF/classes/
+/META-INF/MANIFEST.MF
+
+# CI/CD pipeline files
+/.github/workflows/
+/.gitlab-ci.yml
+/.travis.yml
+/.circleci/config.yml
+/Jenkinsfile
+/.bitbucket-pipelines.yml
+/azure-pipelines.yml
+/.drone.yml
+/Procfile
+
+# Config files (YAML/JSON)
+/config.yml
+/config.yaml
+/application.yml
+/application.yaml
+/application.properties
+/appsettings.json
+/appsettings.Development.json
+/config/config.yml
+/config/database.yml
+/config/settings.yml
+/app.yaml
+/.htpasswd
+/nginx.conf
+/apache.conf
+
+# Database dumps & exports
+/dump.sql
+/data.sql
+/export.sql
+/site.sql
+/users.sql
+/accounts.sql
+/dump.tar.gz
+/backup.tar.gz
+/data.zip
+
+# Swagger / OpenAPI documentation
+/swagger-ui.html
+/swagger-ui/
+/api-docs
+/api-docs.json
+/openapi.json
+/openapi.yaml
+/v2/api-docs
+/v3/api-docs
+/redoc
+/.well-known/openid-configuration
+
+# Monitoring / health endpoints
+/metrics
+/health
+/health/live
+/health/ready
+/healthz
+/readyz
+/livez
+/status
+/ping
+/version
+/info
+/_health
+/api/health
+
+# Admin tools / DB managers
+/phpmyadmin/
+/pma/
+/adminer
+/adminer.php
+/dbadmin/
+/mysqladmin/
+/pgadmin/
+/pgAdmin4/
+
+# GraphQL
+/graphql
+/graphiql
+/playground
+
+# Source control (SVN / Mercurial)
+/.svn/entries
+/.svn/wc.db
+/.hg/
+/.hgignore
+
+# IDE / editor files
+/.idea/
+/.vscode/settings.json
+/.editorconfig
+/.DS_Store
+
+# Token / secret files
+/.netrc
+/.ssh/id_rsa
+/.ssh/authorized_keys
+/id_rsa
+/id_rsa.pub
+/ssl.key
+/server.key
+/private.key
+/tls.key
+/cert.pem
+/server.pem
+/ca.pem

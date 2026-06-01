@@ -68,7 +68,7 @@ load_saved_language()
 from modules.ui        import *
 from modules.recon     import dns_lookup, whois_lookup, subdomain_enum, geoip_lookup, reverse_dns
 from modules.recon     import set_stealth_session as recon_set_stealth
-from modules.scanner   import port_scan_common, port_scan_full, banner_grabber, ssl_inspect, COMMON_PORTS
+from modules.scanner   import port_scan_common, port_scan_full, banner_grabber, ssl_inspect, COMMON_PORTS, set_scan_timeout
 from modules.web       import web_vuln_scan, http_header_audit, dir_bruteforce, cms_detect
 from modules.web       import set_stealth_session as web_set_stealth, set_insecure_ssl as web_set_insecure_ssl
 from modules.exploit   import ssh_audit, ftp_anon_check, http_auth_brute
@@ -105,6 +105,7 @@ SESSION = {
         'rotate_ua':    True,
         'try_nmap':     False,
         'insecure_ssl': False,
+        'scan_timeout': None,   # None = use timing-profile default; float = override in seconds
     },
 }
 
@@ -214,6 +215,9 @@ def _apply_stealth():
     insecure_ssl = cfg.get('insecure_ssl', False)
     web_set_insecure_ssl(insecure_ssl)
     exploit_set_insecure_ssl(insecure_ssl)
+
+    # FIX #6: push custom scan timeout to scanner module
+    set_scan_timeout(cfg.get('scan_timeout'))  # None clears override
 
     if cfg['enabled']:
         sess = StealthSession(
@@ -516,7 +520,7 @@ def _auto_waf_evasion(target: str) -> dict:
     info(f"Probing target for WAF/firewall signatures: {BR}{C}{target}{RS}")
 
     wafs = _probe_waf(target)
-    result = {'wafs_found': wafs, 'cf_bypassed': False, 'evasion_on': False}
+    result = {'wafs_found': wafs, 'cf_bypassed': False, 'evasion_on': False, 'techniques_applied': []}
 
     if not wafs:
         ok("No WAF detected — full scan will run at normal speed.")
@@ -532,18 +536,21 @@ def _auto_waf_evasion(target: str) -> dict:
     cfg['rotate_ua']   = True
     cfg['mutate_paths'] = True
     result['evasion_on'] = True
+    result['techniques_applied'].extend(['stealth_headers', 'rotate_user_agent', 'mutate_paths'])
 
     # ── Step 2: Escalate timing to 'sneaky' unless user already set something slower
     current_timing = cfg.get('timing', 'normal')
     slow_profiles   = ('paranoid', 'sneaky', 'polite')
     if current_timing not in slow_profiles:
         cfg['timing'] = 'sneaky'
+        result['techniques_applied'].append('escalate_timing_to_sneaky')
         info(f"Timing escalated to {BR}{Y}sneaky{RS} to reduce WAF trigger rate.")
 
     # ── Step 3: Enable jitter if not already configured ───────────────────────
     if cfg['jitter_max'] <= 0.5:
         cfg['jitter_min'] = 1.0
         cfg['jitter_max'] = 3.5
+        result['techniques_applied'].append('add_jitter')
         info(f"Request jitter set to {BR}{Y}1.0 – 3.5 s{RS} to mimic organic traffic.")
 
     # Push updated config to all network modules
@@ -552,6 +559,7 @@ def _auto_waf_evasion(target: str) -> dict:
 
     # ── Step 4: Cloudflare-specific — attempt cf_clearance bypass ─────────────
     if 'cloudflare' in wafs:
+        result['techniques_applied'].append('cf_uam_bypass_attempt')
         if _CAMOUFOX_AVAILABLE:
             print(f"\n  {BR}{M}[CF]{RS}  {Y}Cloudflare detected — attempting UAM bypass via browser engine...{RS}")
             proxy = cfg.get('proxy') if cfg.get('enabled') else None
@@ -591,12 +599,15 @@ def _auto_waf_evasion(target: str) -> dict:
                     'domain': target,
                 }
                 result['cf_bypassed'] = True
+                result['techniques_applied'].append('cf_uam_bypass_success')
             else:
                 warn("Cloudflare bypass attempt failed — continuing with stealth headers only.")
+                result['techniques_applied'].append('cf_uam_bypass_failed')
         else:
             warn("Cloudflare detected but camoufox is not installed.")
             warn("Install with: pip install \"camoufox[geoip]\" && python -m camoufox fetch")
             warn("Continuing with stealth headers — some paths may still be blocked.")
+            result['techniques_applied'].append('cf_uam_bypass_skipped_no_camoufox')
 
     return result
 
@@ -650,17 +661,43 @@ async def handle_auto_scan():
     effective_mutate = mutate or bool(wafs_found)
 
     steps = [
-        ("1/8  DNS Lookup",         _run_sync, (dns_lookup, t)),
-        ("2/8  WHOIS Intelligence", _run_sync, (whois_lookup, t)),
-        ("3/8  GeoIP Location",     _run_sync, (geoip_lookup, t)),
-        ("4/8  Port Scan (Common)", _run_sync, (port_scan_common, t, timing, try_nmap)),
-        ("5/8  SSL Certificate",    _run_sync, (ssl_inspect, t, 443)),
-        ("6/8  Web Vuln Scan",      _run_sync, (web_vuln_scan, t, SESSION['use_ssl'], effective_mutate, workers)),
-        ("7/8  HTTP Header Audit",  _run_sync, (http_header_audit, t, SESSION['use_ssl'])),
+        ("DNS Lookup",         _run_sync, (dns_lookup, t)),
+        ("WHOIS Intelligence", _run_sync, (whois_lookup, t)),
+        ("GeoIP Location",     _run_sync, (geoip_lookup, t)),
+        ("Port Scan (Common)", _run_sync, (port_scan_common, t, timing, try_nmap)),
+        ("SSL Certificate",    _run_sync, (ssl_inspect, t, 443)),
+        ("Web Vuln Scan",      _run_sync, (web_vuln_scan, t, SESSION['use_ssl'], effective_mutate, workers)),
+        ("HTTP Header Audit",  _run_sync, (http_header_audit, t, SESSION['use_ssl'])),
     ]
 
     if 'paramiko' not in unavailable_optional:
-        steps.append(("8/8  SSH Audit", _run_sync, (ssh_audit, t, 22, None, ssh_delay)))
+        steps.append(("SSH Audit", _run_sync, (ssh_audit, t, 22, None, ssh_delay)))
+
+    # ── Advanced SPA / JS Scanning ─────────────────────────────────────────────
+    # This fulfills the "Architectural: No JavaScript / SPA support" requirement
+    if _CAMOUFOX_AVAILABLE:
+        from modules.browser_engine import _build_cfg, browser_js_render, browser_scan_js_secrets
+        
+        def _auto_js_render():
+            cfg = _build_cfg(SESSION)
+            data = browser_js_render(cfg)
+            from modules.browser_engine import display_js_render
+            if data: display_js_render(data)
+            return data
+            
+        def _auto_js_secrets():
+            cfg = _build_cfg(SESSION)
+            data = browser_scan_js_secrets(cfg)
+            from modules.browser_engine import display_js_secrets
+            if data: display_js_secrets(data)
+            return data
+            
+        steps.append(("SPA & JS Render", _run_sync, (_auto_js_render,)))
+        steps.append(("JS Secrets Scan", _run_sync, (_auto_js_secrets,)))
+
+    # Renumber labels dynamically since length varies
+    for idx, step in enumerate(steps):
+        steps[idx] = (f"{idx+1}/{len(steps)}  {step[0]}", step[1], step[2])
 
     all_results = {}
     for step in steps:
@@ -681,7 +718,7 @@ async def handle_auto_scan():
 
             # ── WAF block recovery: if web step got no results, retry once
             #    with a fresh set of mutated paths and longer jitter
-            if wafs_found and r is not None and label.startswith('6/'):
+            if wafs_found and r is not None and 'Web Vuln Scan' in label:
                 exposed = r.get('exposed', []) if isinstance(r, dict) else []
                 if not exposed:
                     info("Web vuln step returned no exposures — retrying with deeper path mutation...")
@@ -788,27 +825,36 @@ async def handle_export():
         pause()
         return
 
+    def _clean(obj):
+        """Recursively make any value JSON-safe.
+        datetime → ISO 8601 str, tuple → list, anything else → str() fallback."""
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, dict):
+            return {str(k): _clean(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_clean(i) for i in obj]
+        try:
+            json.dumps(obj)
+            return obj
+        except (TypeError, ValueError):
+            return str(obj)
+
+    reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports')
+    os.makedirs(reports_dir, exist_ok=True)
     ts   = datetime.now().strftime('%Y%m%d_%H%M%S')
-    name = f"cscan_report_{ts}.json"
+    name = os.path.join(reports_dir, f"cscan_report_{ts}.json")
 
     export = {
         'target':    SESSION['target'],
         'ip':        SESSION['ip'],
         'timestamp': datetime.now().isoformat(),
-        'results':   {}
+        'results':   {k: _clean(v) for k, v in SESSION['results'].items()},
     }
-
-    # Serialise  (some results may contain non-JSON-serialisable objects)
-    for key, val in SESSION['results'].items():
-        try:
-            json.dumps(val)
-            export['results'][key] = val
-        except (TypeError, ValueError):
-            export['results'][key] = str(val)
 
     try:
         with open(name, 'w') as f:
-            json.dump(export, f, indent=2, default=str)
+            json.dump(export, f, indent=2)
         ok(f"{T('export_ok')} {BR}{G}{name}{RS}")
     except Exception as e:
         alert(f"{T('export_fail')} {e}")
@@ -949,6 +995,9 @@ def handle_stealth_config():
     print(f"    {'Rotate UA':<20} : {cfg['rotate_ua']}")
     print(f"    {'Try nmap':<20} : {cfg['try_nmap']}")
     print(f"    {'Insecure SSL':<20} : {cfg.get('insecure_ssl', False)}")
+    # FIX #6: show custom timeout
+    _t = cfg.get('scan_timeout')
+    print(f"    {'Scan Timeout':<20} : {f'{_t}s' if _t else 'profile default'}")
     print()
 
     proxy = input(f"  {BR}{W}{T('stealth_proxy_prompt')}: {RS}").strip()
@@ -971,6 +1020,13 @@ def handle_stealth_config():
     else:
         cfg['timing'] = 'normal'
 
+    # FIX #6: custom port scan timeout override
+    raw_to = input(f"  {BR}{W}Custom scan timeout in seconds (Enter = use profile default): {RS}").strip()
+    try:
+        cfg['scan_timeout'] = float(raw_to) if raw_to else None
+    except ValueError:
+        cfg['scan_timeout'] = None
+
     cfg['mutate_paths'] = prompt_yes(T("stealth_mutate_prompt"))
     cfg['rotate_ua']    = prompt_yes(T("stealth_ua_prompt"))
     cfg['try_nmap']     = prompt_yes(T("stealth_nmap_prompt"))
@@ -990,6 +1046,28 @@ def handle_stealth_toggle():
         ok(T("stealth_enabled"))
     else:
         warn(T("stealth_disabled"))
+    pause()
+
+
+def handle_lang_toggle():
+    """Switch UI language between English and Kiswahili, persist the choice."""
+    section(T("lang_toggle_title"))
+    current = get_lang()
+    info(T("lang_current"))                # shows current lang in current lang
+    print()
+    print(f"  {BR}{G}[1]{RS}  English")
+    print(f"  {BR}{C}[2]{RS}  Kiswahili")
+    print(f"  {BR}{Y}[Enter]{RS}  Keep current  ({current})")
+    print()
+    choice = input(f"  {BR}{M}[>]{RS} {BR}{W}Choose / Chagua [1/2]: {RS}").strip()
+    if choice == '1':
+        save_language('en')
+        ok(T("lang_toggled_en"))           # prints in the NEW language (English)
+    elif choice == '2':
+        save_language('sw')
+        ok(T("lang_toggled_sw"))           # prints in the NEW language (Kiswahili)
+    else:
+        info(f"Language unchanged  /  Lugha haijabadilishwa  ({get_lang()})")
     pause()
 
 
@@ -1023,14 +1101,14 @@ def handle_cf_bypass_inject():
 
     SESSION['results']['cf_bypass'] = result
 
-    # Inject into stealth session if one is active
+    # FIX #9: Inject into session regardless of proxy — proxy is optional
     cfg = SESSION['stealth']
-    if cfg.get('enabled') and cfg.get('proxy') is not None:
+    if cfg.get('enabled'):
         sess = StealthSession(
-            proxy=cfg['proxy'],
+            proxy=cfg.get('proxy'),          # None is valid (no proxy)
             jitter_min=cfg['jitter_min'],
             jitter_max=cfg['jitter_max'],
-            rotate_ua=False,   # don't rotate; keep the CF-matched UA
+            rotate_ua=False,                 # keep the CF-matched UA fixed
             random_headers=True,
             cookie_persist=True,
             insecure_ssl=cfg.get('insecure_ssl', False),
@@ -1045,9 +1123,11 @@ def handle_cf_bypass_inject():
         recon_set_stealth(sess)
         exploit_set_stealth(sess)
         ok("cf_clearance + User-Agent injected into active stealth session!")
+        if not cfg.get('proxy'):
+            info("Note: No proxy configured — cookie is active but source IP is not masked.")
         ok("All subsequent scans will use the solved Cloudflare cookie.")
     else:
-        warn("Stealth mode is OFF — enable stealth and configure a proxy first.")
+        warn("Stealth mode is OFF — enable stealth first (press S or use menu 25).")
         warn("cf_clearance saved to results only (not injected into HTTP session).")
     pause()
 
@@ -1130,6 +1210,8 @@ HANDLERS = {
     'K':  handle_ai_key_change,
     's':  handle_stealth_toggle,
     'S':  handle_stealth_toggle,
+    'l':  handle_lang_toggle,
+    'L':  handle_lang_toggle,
 }
 
 # Add SSH handler only if paramiko is available
@@ -1178,7 +1260,8 @@ async def interactive_mode():
             show_banner()
             show_status()
             try:
-                if asyncio.iscoroutinefunction(handler) or getattr(handler, '__name__', '') in ['handle_dns', 'handle_whois', 'handle_subdomain', 'handle_geoip', 'handle_reverse_dns', 'handle_port_common', 'handle_port_full', 'handle_banner_grab', 'handle_ssl', 'handle_web_vuln', 'handle_header_audit', 'handle_dir_brute', 'handle_cms', 'handle_ssh', 'handle_ftp', 'handle_http_auth', 'handle_auto_scan', 'handle_export', 'handle_ai_analyze', 'handle_ai_quick', 'handle_ai_cve', 'handle_ai_ask', 'handle_ai_report']:
+                # FIX #8: Use asyncio.iscoroutinefunction only — no fragile name list
+                if asyncio.iscoroutinefunction(handler):
                     await handler()
                 else:
                     handler()
