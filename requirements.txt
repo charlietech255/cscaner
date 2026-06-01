@@ -5,6 +5,11 @@ python-whois
 python-nmap
 beautifulsoup4
 
+# ── New modules (v2.2) ────────────────────────────────────────────────────────
+# Service brute-force: MySQL and PostgreSQL support
+pymysql
+psycopg2-binary
+
 # Note: No external crypto library needed
 # crypto_utils.py uses Python stdlib (hashlib, hmac, base64) only
 # This keeps CSCAN lightweight and Termux-compatible

@@ -180,7 +180,8 @@ def _grade_200_response(path: str, body: str, size: int) -> tuple:
         '/wp-config.php', '/config.php', '/configuration.php', '/settings.php',
         '/web.config', '/phpinfo.php', '/info.php', '/server-status', '/server-info',
         '/backup.sql', '/database.sql', '/db_backup.sql', '/secrets.txt',
-        '/credentials.txt',
+        '/credentials.txt', '/package.json', '/composer.json', '/package-lock.json',
+        '/yarn.lock'
     }
     if path in ALWAYS_CRITICAL_PATHS:
         return ('critical', 'Inherently sensitive path returned 200', '')
@@ -244,9 +245,17 @@ def web_vuln_scan(target: str, use_ssl: bool = False, mutate: bool = False, work
     findings = {'critical': [], 'high': [], 'forbidden': [], 'auth_required': [], 'info': []}
 
     def check(path):
-        r = _get(base, path)
+        r = _get(base, path, allow_redirects=True)
         if r is None:
             return None
+
+        # Check if we got redirected to a generic home/login page (Soft 404 via redirect)
+        if r.history:
+            from urllib.parse import urlparse
+            final_path = urlparse(r.url).path
+            if final_path in ('/', '/index.html', '/index.php', '/login', '/login.php', '/home'):
+                return None
+
         if r.status_code == 200:
             severity, reason, _ = _grade_200_response(path, r.text, len(r.content))
             if severity:
@@ -712,6 +721,55 @@ def extract_versions(target: str, use_ssl: bool = False) -> dict:
     
     return versions
 
+
+def auto_cve_mapping(target: str, use_ssl: bool = False, ports_data: list = None) -> dict:
+    """Extract versions from web headers and port banners, then map to CVEs."""
+    section("AUTOMATIC CVE MAPPING")
+    
+    # Get web versions
+    detected_versions = extract_versions(target, use_ssl)
+    
+    # Parse port banners
+    if ports_data:
+        for port, banner in ports_data:
+            if not banner: continue
+            for tech, tech_data in CVE_DATABASE.items():
+                pattern = tech_data.get('pattern')
+                if pattern:
+                    match = re.search(pattern, banner, re.IGNORECASE)
+                    if match:
+                        detected_versions[tech] = match.group(1)
+                        ok(f"Found {tech} (via port {port}): {BR}{G}{match.group(1)}{RS}")
+    
+    cve_results = {}
+    
+    for tech, version in detected_versions.items():
+        if tech in CVE_DATABASE:
+            db_versions = CVE_DATABASE[tech].get("versions", {})
+            matched_cves = set()
+            
+            for v, v_cves in db_versions.items():
+                parts_det = version.split('.')
+                parts_v = v.split('.')
+                if len(parts_det) >= 2 and len(parts_v) >= 2:
+                    if parts_det[0] == parts_v[0] and parts_det[1] == parts_v[1]:
+                        if compare_versions(version, v) <= 0:
+                            matched_cves.update(v_cves)
+                elif version == v:
+                    matched_cves.update(v_cves)
+            
+            if matched_cves:
+                cve_results[tech] = {"version": version, "cves": list(matched_cves)}
+                alert(f"{BR}{R}[!] {tech} {version} is vulnerable to: {', '.join(matched_cves)}{RS}")
+            else:
+                ok(f"{tech} {version} has no known CVEs in local database.")
+                
+    if not cve_results and detected_versions:
+        ok("No vulnerabilities mapped for detected software versions.")
+    elif not detected_versions:
+        warn("No software versions detected to map to CVEs.")
+        
+    return cve_results
 
 # ── Sensitive Information Disclosure Detection ─────────────────────────────────
 def detect_info_disclosure(target: str, use_ssl: bool = False) -> list:

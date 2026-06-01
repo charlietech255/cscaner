@@ -269,6 +269,34 @@ def subdomain_enum(target: str, wordlist: list = None, workers: int = 30) -> lis
 # Known Cloudflare AS numbers — GeoIP on these returns CF's infra, not origin
 _CLOUDFLARE_ASN = {'AS13335', 'AS209242'}
 
+def _find_origin_ips_via_mx(hostname: str) -> list:
+    """Attempt to find the real origin IP of a domain hidden behind Cloudflare via MX records."""
+    import socket
+    import requests
+    
+    potential_ips = set()
+    try:
+        r = requests.get(
+            'https://cloudflare-dns.com/dns-query',
+            params={'name': hostname, 'type': 'MX'},
+            headers={'Accept': 'application/dns-json'},
+            timeout=5
+        )
+        data = r.json()
+        answers = [a['data'] for a in data.get('Answer', [])]
+        for rec in answers:
+            parts = rec.split()
+            mx_domain = parts[1].strip('.') if len(parts) >= 2 else rec.strip('.')
+            try:
+                potential_ips.add(socket.gethostbyname(mx_domain))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    
+    return list(potential_ips)
+
+
 def geoip_lookup(target: str) -> dict:
     section("GEOIP & LOCATION TRACKER")
     hostname = extract_hostname(target)
@@ -295,7 +323,16 @@ def geoip_lookup(target: str) -> dict:
             if is_cf_edge:
                 warn(f"This IP ({ip}) belongs to {BR}{Y}Cloudflare ({asn}){RS}")
                 warn("GeoIP shows Cloudflare's network location, NOT the origin server.")
-                info("Tip: Check MX records or use Shodan/Censys to find the real origin IP.")
+                
+                info("Auto-investigating MX records to find potential real origin IP...")
+                origin_ips = _find_origin_ips_via_mx(hostname)
+                if origin_ips:
+                    ok("Found potential origin IPs bypassing Cloudflare via MX:")
+                    for oip in origin_ips:
+                        print(f"  {BR}{M}◈{RS}  {BR}{R}{oip}{RS}")
+                    d['potential_origin_ips'] = origin_ips
+                else:
+                    warn("Could not discover origin IP via MX records.")
                 print()
 
             rows = [

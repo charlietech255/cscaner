@@ -31,6 +31,40 @@ TIMEOUT       = 60  # Gemini can be slow on large payloads
 #  API KEY MANAGEMENT
 # ─────────────────────────────────────────────────────────────────────────────
 
+def get_available_models(api_key: str) -> list:
+    """Fetch available models from Gemini API that support generateContent."""
+    try:
+        resp = requests.get(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            params={"key": api_key},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            models = []
+            for m in data.get("models", []):
+                name = m.get("name", "").replace("models/", "")
+                methods = m.get("supportedGenerationMethods", [])
+                if "generateContent" in methods and "gemini" in name:
+                    models.append(name)
+            
+            # Sort to prefer flash and newer versions
+            def score(n):
+                s = 0
+                if '2.5' in n: s += 40
+                elif '2.0' in n: s += 30
+                elif '1.5' in n: s += 20
+                if 'flash' in n: s += 5
+                elif 'pro' in n: s += 4
+                return s
+                
+            models.sort(key=score, reverse=True)
+            return models
+    except Exception:
+        pass
+    return None
+
+
 def prompt_api_key() -> str:
     """
     Interactively prompt for a Gemini API key and do a quick validation call.
@@ -45,7 +79,16 @@ def prompt_api_key() -> str:
         warn("No key entered.")
         return None
 
-    info("Validating API key…")
+    info("Validating API key and fetching available models…")
+    
+    global GEMINI_MODELS
+    available = get_available_models(key)
+    if available:
+        GEMINI_MODELS = available
+        ok(f"Found {len(available)} supported model(s). Prioritizing: {available[0]}")
+    else:
+        warn("Could not fetch model list, using defaults.")
+
     # Quick test call with minimal tokens
     try:
         resp = _call_gemini(key, "Reply with exactly: OK", max_tokens=5)

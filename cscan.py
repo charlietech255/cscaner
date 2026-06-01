@@ -69,7 +69,7 @@ from modules.ui        import *
 from modules.recon     import dns_lookup, whois_lookup, subdomain_enum, geoip_lookup, reverse_dns
 from modules.recon     import set_stealth_session as recon_set_stealth
 from modules.scanner   import port_scan_common, port_scan_full, banner_grabber, ssl_inspect, COMMON_PORTS, set_scan_timeout
-from modules.web       import web_vuln_scan, http_header_audit, dir_bruteforce, cms_detect
+from modules.web       import web_vuln_scan, http_header_audit, dir_bruteforce, cms_detect, auto_cve_mapping
 from modules.web       import set_stealth_session as web_set_stealth, set_insecure_ssl as web_set_insecure_ssl
 from modules.exploit   import ssh_audit, ftp_anon_check, http_auth_brute
 from modules.exploit   import set_stealth_session as exploit_set_stealth, set_insecure_ssl as exploit_set_insecure_ssl
@@ -85,6 +85,14 @@ from modules.browser_engine import (
     menu_screenshot, menu_fingerprint_probe, menu_harvest_cookies,
     menu_js_secrets
 )
+# ── New v2.2 modules ──────────────────────────────────────────────────────────
+from modules.active_vuln  import active_vuln_scan
+from modules.active_vuln  import set_stealth_session as activevuln_set_stealth
+from modules.nvd_cve      import live_cve_mapping, menu_nvd_lookup
+from modules.udp_scanner  import udp_scan_suite
+from modules.ssl_audit    import ssl_deep_audit
+from modules.osint        import menu_osint
+from modules.service_brute import service_brute_suite
 
 # ── Session state ─────────────────────────────────────────────────────────────
 SESSION = {
@@ -232,25 +240,29 @@ def _apply_stealth():
         web_set_stealth(sess)
         recon_set_stealth(sess)
         exploit_set_stealth(sess)
+        activevuln_set_stealth(sess)
     else:
         web_set_stealth(None)
         recon_set_stealth(None)
         exploit_set_stealth(None)
+        activevuln_set_stealth(None)
 
 
 def show_status():
     """Show current session status bar."""
+    from modules.ui import DM, C, BR, W, G, Y, M, RS, T
     t   = SESSION['target'] or f"{DM}{T('status_not_set')}{RS}"
     ip  = SESSION['ip']     or f"{DM}{T('status_unknown')}{RS}"
     ssl = f"{G}HTTPS{RS}" if SESSION['use_ssl'] else f"{Y}HTTP{RS}"
-    ai  = f"{BR}{M}{T('status_ai_on')}{RS}" if SESSION['gemini_key'] else f"{DM}{T('status_ai_off')}{RS}"
-    st  = f"{BR}{G}{T('status_stealth_on')}{RS}" if SESSION['stealth']['enabled'] else f"{DM}STEALTH OFF{RS}"
+    ai  = f"{M}ON{RS}" if SESSION['gemini_key'] else f"{DM}OFF{RS}"
+    st  = f"{G}ON{RS}" if SESSION['stealth']['enabled'] else f"{DM}OFF{RS}"
+    
     dur = ''
     if SESSION['start_time']:
         secs = int(time.time() - SESSION['start_time'])
-        dur  = f"  {DM}│{RS}  {secs}s"
+        dur  = f"   {BR}{W}TIME:{RS} {secs}s"
 
-    print(f"\n  {DM}┌─ Target: {BR}{C}{t}{RS}  {DM}│ IP: {BR}{W}{ip}{RS}  {DM}│ {ssl}  │ {st}  │ {ai}{dur}")
+    print(f"\n  {BR}{W}TARGET:{RS} {C}{t}{RS}   {BR}{W}IP:{RS} {ip}   {BR}{W}PROTO:{RS} {ssl}   {BR}{W}STEALTH:{RS} {st}   {BR}{W}AI:{RS} {ai}{dur}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -468,12 +480,95 @@ async def handle_http_auth():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  NEW V2.2 HANDLERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def handle_active_vuln():
+    t = get_target()
+    if not t: return
+    _apply_stealth()
+    res = await _run_sync(active_vuln_scan, t, SESSION['use_ssl'])
+    SESSION['results']['active_vuln'] = res
+    pause()
+
+
+async def handle_nvd_cve():
+    """Live NVD CVE lookup — searches against detected software versions."""
+    t = get_target()
+    if not t: return
+    # Re-use any versions already extracted in this session
+    detected = {}
+    auto = SESSION['results'].get('auto_scan', {})
+    for key, val in auto.items():
+        if 'CVE' in key and isinstance(val, dict):
+            for tech, td in val.items():
+                if isinstance(td, dict) and 'version' in td:
+                    detected[tech] = td['version']
+    # Also check web extract
+    from modules.web import extract_versions
+    web_vers = await _run_sync(extract_versions, t, SESSION['use_ssl'])
+    detected.update(web_vers)
+
+    ports_data = SESSION['results'].get('ports_common', [])
+    res = await _run_sync(live_cve_mapping, detected, ports_data)
+    SESSION['results']['live_cve'] = res
+    pause()
+
+
+async def handle_nvd_manual():
+    """Manual NVD keyword lookup."""
+    res = await _run_sync(menu_nvd_lookup)
+    if res:
+        SESSION['results']['nvd_lookup'] = res
+    pause()
+
+
+async def handle_udp_scan():
+    t = get_target()
+    if not t: return
+    domain_raw = input(f"  {BR}{W}Domain for zone transfer (Enter to auto-detect): {RS}").strip() or None
+    res = await _run_sync(udp_scan_suite, t, domain_raw)
+    SESSION['results']['udp_scan'] = res
+    pause()
+
+
+async def handle_ssl_deep():
+    t = get_target()
+    if not t: return
+    raw = input(f"  {BR}{W}Port [443]: {RS}").strip()
+    port = int(raw) if raw.isdigit() else 443
+    res = await _run_sync(ssl_deep_audit, t, port)
+    SESSION['results']['ssl_deep'] = res
+    pause()
+
+
+async def handle_osint():
+    t = get_target()
+    if not t: return
+    res = await _run_sync(menu_osint, SESSION)
+    if res:
+        SESSION['results']['osint'] = res
+    pause()
+
+
+async def handle_service_brute():
+    t = get_target()
+    if not t: return
+    open_ports = SESSION['results'].get('ports_common', [])
+    if not open_ports:
+        warn("No port scan data found. Run port scan first (or proceed to check all default ports).")
+    res = await _run_sync(service_brute_suite, t, open_ports or None)
+    SESSION['results']['service_brute'] = res
+    pause()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  WAF AUTO-EVASION HELPER  (used by full auto-scan pipeline)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _probe_waf(target: str) -> list:
     """
-    Send a plain GET request to the target and check response headers/body
+    Send a suspicious GET request to the target and check response headers/body
     for known WAF signatures. Returns a list of detected WAF names.
     """
     import requests as _req
@@ -482,24 +577,28 @@ def _probe_waf(target: str) -> list:
     url = target if target.startswith(('http://', 'https://')) else f'http://{target}'
     detected = []
     try:
+        # Send a suspicious payload to trigger an active WAF block
+        probe_url = url.rstrip('/') + '/?id=1%27%20OR%20%271%27=%271'
         r = _req.get(
-            url, timeout=8, verify=False,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'},
+            probe_url, timeout=8, verify=False,
+            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CSCAN-WAF-Probe'},
             allow_redirects=True,
         )
         combined = (r.text or '').lower()
         for k, v in r.headers.items():
             combined += f' {k.lower()}: {v.lower()}'
-        for waf_name, sigs in WAF_SIGNATURES.items():
-            for sig in sigs:
-                if sig.lower() in combined:
-                    detected.append(waf_name)
-                    break
-        # Extra: check for 403/429 with WAF-typical body phrases
-        if r.status_code in (403, 429) and not detected:
-            generic_phrases = ['access denied', 'blocked', 'forbidden', 'security', 'firewall', 'ddos']
-            if any(p in combined for p in generic_phrases):
-                detected.append('generic')
+            
+        # Only consider it a WAF if it actively blocks us or returns WAF-specific headers
+        if r.status_code in (403, 406, 429, 503):
+            for waf_name, sigs in WAF_SIGNATURES.items():
+                for sig in sigs:
+                    if sig.lower() in combined:
+                        detected.append(waf_name)
+                        break
+            if not detected:
+                generic_phrases = ['access denied', 'blocked', 'forbidden', 'security', 'firewall', 'ddos', 'attention required']
+                if any(p in combined for p in generic_phrases):
+                    detected.append('generic')
     except Exception:
         pass
     return list(set(detected))
@@ -697,7 +796,10 @@ async def handle_auto_scan():
 
     # Renumber labels dynamically since length varies
     for idx, step in enumerate(steps):
-        steps[idx] = (f"{idx+1}/{len(steps)}  {step[0]}", step[1], step[2])
+        steps[idx] = (f"{idx+1}/{len(steps)+1}  {step[0]}", step[1], step[2])
+
+    # We can't add CVE Mapping natively above because it needs ports_data which we don't have yet.
+    # We will run it after all steps complete.
 
     all_results = {}
     for step in steps:
@@ -745,6 +847,21 @@ async def handle_auto_scan():
                 backoff = random.uniform(5.0, 12.0)
                 warn(f"WAF block signal detected — backing off for {backoff:.1f}s before next step.")
                 await asyncio.sleep(backoff)
+
+    # ── Auto CVE Mapping Step (runs after all others to use ports data) ────────
+    cve_label = f"{len(steps)+1}/{len(steps)+1}  CVE Auto-Mapping"
+    print(f"\n  {BR}{C}┌── {cve_label} {DM}{'─' * (45 - len(cve_label))} ─►{RS}")
+    ports_data = []
+    for k in all_results:
+        if 'Port Scan' in k:
+            ports_data = all_results[k]
+            break
+            
+    try:
+        cve_res = await _run_sync(auto_cve_mapping, t, SESSION['use_ssl'], ports_data)
+        all_results[cve_label] = cve_res
+    except Exception as e:
+        alert(f"{T('auto_step_fail')} {e}")
 
     SESSION['results']['auto_scan'] = all_results
 
@@ -843,7 +960,8 @@ async def handle_export():
     reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports')
     os.makedirs(reports_dir, exist_ok=True)
     ts   = datetime.now().strftime('%Y%m%d_%H%M%S')
-    name = os.path.join(reports_dir, f"cscan_report_{ts}.json")
+    json_name = os.path.join(reports_dir, f"cscan_report_{ts}.json")
+    txt_name  = os.path.join(reports_dir, f"cscan_report_{ts}.txt")
 
     export = {
         'target':    SESSION['target'],
@@ -852,10 +970,88 @@ async def handle_export():
         'results':   {k: _clean(v) for k, v in SESSION['results'].items()},
     }
 
+    # Generate well-formatted TXT report
+    lines = []
+    lines.append("============================================================")
+    lines.append("                 CSCAN SECURITY REPORT")
+    lines.append("============================================================")
+    lines.append(f"Target:      {export.get('target', 'N/A')}")
+    lines.append(f"IP Address:  {export.get('ip', 'N/A')}")
+    lines.append(f"Timestamp:   {export.get('timestamp', 'N/A')}")
+    lines.append("============================================================\n")
+
+    # Build Executive Summary
+    total_critical = 0
+    total_high = 0
+    open_ports = 0
+    cves_found = 0
+    
+    auto_res = export['results'].get('auto_scan', {})
+    for key, val in auto_res.items():
+        if 'Web Vuln Scan' in key and isinstance(val, dict):
+            total_critical += len(val.get('critical', []))
+            total_high += len(val.get('high', []))
+        if 'Port Scan' in key and isinstance(val, list):
+            open_ports += len(val)
+        if 'CVE Auto-Mapping' in key and isinstance(val, dict):
+            for tech_data in val.values():
+                cves_found += len(tech_data.get('cves', []))
+
+    lines.append("[EXECUTIVE SUMMARY]")
+    lines.append("-" * 60)
+    lines.append(f"  - Critical Exposures : {total_critical}")
+    lines.append(f"  - High Exposures     : {total_high}")
+    lines.append(f"  - Open Ports         : {open_ports}")
+    lines.append(f"  - Vulnerable CVEs    : {cves_found}")
+    lines.append("\n")
+
+    def _format_value(val, indent=2):
+        ind = " " * indent
+        if isinstance(val, dict):
+            for k, v in val.items():
+                if not v and v is not False and v != 0:
+                    continue
+                if isinstance(v, (dict, list)):
+                    lines.append(f"{ind}- {k}:")
+                    _format_value(v, indent + 4)
+                else:
+                    lines.append(f"{ind}- {k}: {v}")
+        elif isinstance(val, list):
+            for i in val:
+                # If the item was originally a tuple (converted to list of length 2 or 3)
+                if isinstance(i, list) and len(i) in (2, 3) and not isinstance(i[0], (dict, list)):
+                    if len(i) == 2:
+                        lines.append(f"{ind}* {i[0]}: {i[1]}")
+                    else:
+                        lines.append(f"{ind}* {i[0]}: {i[1]} ({i[2]})")
+                elif isinstance(i, (dict, list)):
+                    _format_value(i, indent + 2)
+                else:
+                    lines.append(f"{ind}* {i}")
+        else:
+            lines.append(f"{ind}{val}")
+
+    for module, data in export['results'].items():
+        if not data and data is not False and data != 0: 
+            lines.append(f"[{module.upper()}]")
+            lines.append("-" * 60)
+            lines.append("  - No findings (Clean / Empty)\n")
+            continue
+            
+        lines.append(f"[{module.upper()}]")
+        lines.append("-" * 60)
+        _format_value(data, 2)
+        lines.append("")
+
     try:
-        with open(name, 'w') as f:
+        # Save JSON
+        with open(json_name, 'w') as f:
             json.dump(export, f, indent=2)
-        ok(f"{T('export_ok')} {BR}{G}{name}{RS}")
+        # Save TXT
+        with open(txt_name, 'w') as f:
+            f.write("\n".join(lines))
+        
+        ok(f"{T('export_ok')} {BR}{G}{txt_name}{RS} (and .json)")
     except Exception as e:
         alert(f"{T('export_fail')} {e}")
     pause()
@@ -1203,6 +1399,14 @@ HANDLERS = {
     '32': handle_fingerprint_probe,
     '33': handle_harvest_cookies,
     '34': handle_js_secrets,
+    # ── v2.2 New Modules ──────────────────────────────────────────────────────
+    '35': handle_active_vuln,
+    '36': handle_nvd_cve,
+    '37': handle_nvd_manual,
+    '38': handle_udp_scan,
+    '39': handle_ssl_deep,
+    '40': handle_osint,
+    '41': handle_service_brute,
     # Navigation
     't':  set_target,
     'T':  set_target,

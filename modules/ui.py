@@ -58,150 +58,61 @@ def _wide(s: str) -> int:
     """Count extra terminal cells taken by wide chars (each = +1 extra cell)."""
     return sum(1 for ch in s if unicodedata.east_asian_width(ch) in ('W', 'F'))
 
-# ── ASCII Banner (narrow — safe on portrait Termux) ───────────────────────────
+# ── ASCII Banner (Modern Minimalist) ──────────────────────────────────────────
 def _build_banner() -> str:
     subtitle = T("banner_subtitle")
-    return (
-        f"\n"
-        f"{BR}{G}   ____                                 \n"
-        f"{BR}{G}  / ___|___  ___ __ _ _ __  _ __   ___ _ __ \n"
-        f"{BR}{Y} | |   / __|/ __/ _` | '_ \\| '_ \\ / _ \\ '__|\n"
-        f"{DM}{W} | |___\\__ \\ (_| (_| | | | | | | |  __/ |   \n"
-        f"{BR}{B}  \\____|___/\\___\\__,_|_| |_|_| |_|\\___|_|   \n"
-        f"{BR}{Y}               [ T O O L ]{RS}\n"
-        f"{BR}{M}  {'─'*43}\n"
-        f"  {subtitle}\n"
-        f"  {'─'*43}{RS}\n"
-    )
+    return f"""
+{BR}{C}  ▗▄▄▖ ▗▄▄▖ ▗▄▄▖ ▗▄▖ ▗▖  ▗▖
+  ▐▌ ▐▌▐▌   ▐▌   ▐▌ ▐▌▐▛▚▖▐▌
+  ▐▌   ▝▀▚▖ ▐▌   ▐▛▀▜▌▐▌ ▝▜▌
+  ▝▚▄▄▖▗▄▄▞▘▝▚▄▄▖▐▌ ▐▌▐▌  ▐▌{RS}
+  
+  {BR}{W}CSCAN{RS} {DM}—{RS} {subtitle}
+  {DM}{'─'*55}{RS}
+"""
 
-# ── 2-column menu (mobile-optimised) ─────────────────────────────────────────
+# ── Modern Flat Menu Layout ──────────────────────────────────────────────────
 def _build_menu() -> str:
-    """
-    Layout (47 chars wide including 2-char indent):
-      ╔═══════════════════╦═══════════════════╗  <- 2+1+21+1+21+1 = 47
-      ║ LEFT (19 chars)   ║ RIGHT (19 chars)  ║
-      ╚═══════════════════╩═══════════════════╝
+    # Use dynamic padding for translations
+    return f"""
+{BR}{C}  ● RECONNAISSANCE & NETWORK{RS}
+    {G}[01]{RS} {T("sm1"):<22} {G}[06]{RS} {T("sm6")}
+    {G}[02]{RS} {T("sm2"):<22} {G}[07]{RS} {T("sm7")}
+    {G}[03]{RS} {T("sm3"):<22} {G}[08]{RS} {T("sm8")}
+    {G}[04]{RS} {T("sm4"):<22} {G}[09]{RS} {T("sm9")}
+    {G}[05]{RS} {T("sm5"):<22}
 
-    Single-col rows (after merge):
-      ╔═════════════════════════════════════════╗  <- 2+1+43+1 = 47
-      ║ FULL (41 chars)                         ║
-      ╚═════════════════════════════════════════╝
-    """
-    wL = 19    # left column inner data width
-    wR = 19    # right column inner data width
-    wF = 41    # single-column inner data width  (= L+1+R)
+{BR}{C}  ● WEB & EXPLOITATION{RS}
+    {Y}[10]{RS} {T("sm10"):<22} {Y}[14]{RS} {T("sm14")}
+    {Y}[11]{RS} {T("sm11"):<22} {Y}[15]{RS} {T("sm15")}
+    {Y}[12]{RS} {T("sm12"):<22} {Y}[16]{RS} {T("sm16")}
+    {Y}[13]{RS} {T("sm13"):<22}
 
-    # ── number colour by section ──────────────────────────────────────────
-    def _nc(n):
-        n = int(n)
-        if n <= 5:  return BR + G
-        if n <= 9:  return BR + Y
-        if n <= 13: return BR + B
-        if n <= 16: return BR + R
-        if n <= 18: return BR + W
-        if n <= 27: return BR + M
-        return BR + C
+{BR}{C}  ● AUTOMATION & AI{RS}
+    {M}[17]{RS} {T("sm17"):<22} {M}[20]{RS} {T("sm20")}
+    {M}[18]{RS} {T("sm18"):<22} {M}[21]{RS} {T("sm21")}
+    {M}[19]{RS} {T("sm19"):<22} {M}[22]{RS} {T("sm22")}
+                              {M}[23]{RS} {T("sm23")}
 
-    # ── box borders ──────────────────────────────────────────────────────
-    TOP2  = f"  {C}╔{'═'*(wL+2)}╦{'═'*(wR+2)}╗{RS}"
-    MID2  = f"  {C}╠{'═'*(wL+2)}╬{'═'*(wR+2)}╣{RS}"
-    MRG   = f"  {C}╠{'═'*(wL+2)}╩{'═'*(wR+2)}╣{RS}"   # 2-col → 1-col merge
-    MID1  = f"  {C}╠{'═'*(wF+2)}╣{RS}"
-    BOT   = f"  {C}╚{'═'*(wF+2)}╝{RS}"
+{BR}{C}  ● STEALTH & ADVANCED OPSEC{RS}
+    {B}[24]{RS} {T("sm24"):<22} {B}[26]{RS} CF WAF Bypass (solve)
+    {B}[25]{RS} {T("sm25"):<22} {B}[27]{RS} CF Bypass + Inject Session
 
-    # ── row builders ─────────────────────────────────────────────────────
-    def sec2(lt, rt=''):
-        lp = f"{lt:<{wL}}"
-        rp = f"{rt:<{wR}}" if rt else ' ' * wR
-        return f"  {C}║{RS} {BR}{M}{lp}{RS} {C}║{RS} {BR}{M}{rp}{RS} {C}║{RS}"
+{BR}{C}  ● ADVANCED BROWSER ENGINE{RS}
+    {C}[28]{RS} JS-Rendered Page       {C}[32]{RS} Browser Fingerprint
+    {C}[29]{RS} Network Traffic        {C}[33]{RS} Cookie Harvester
+    {C}[30]{RS} Form Login Tester      {C}[34]{RS} JS Secret Scanner
+    {C}[31]{RS} Screenshot Recon
 
-    def row2(ln, lt, rn='', rt=''):
-        nc_l  = _nc(ln)
-        pfx_l = f"[{ln}] "
-        lbl_l = f"{lt:<{wL - len(pfx_l)}}"
-        left  = f"{nc_l}{pfx_l}{RS}{C}{lbl_l}"
-        if rn:
-            nc_r  = _nc(rn)
-            pfx_r = f"[{rn}] "
-            lbl_r = f"{rt:<{wR - len(pfx_r)}}"
-            right = f"{nc_r}{pfx_r}{RS}{C}{lbl_r}"
-        else:
-            right = ' ' * wR
-        return f"  {C}║{RS} {left} {C}║{RS} {right} {C}║{RS}"
+{BR}{C}  ● v2.2 — ACTIVE EXPLOITATION{RS}
+    {R}[35]{RS} Active Vuln Scan (XSS/SQLi/SSRF)
+    {R}[36]{RS} Live CVE Map (NVD API)    {R}[38]{RS} UDP Scanner (SNMP/TFTP/NTP)
+    {R}[37]{RS} NVD Manual CVE Lookup     {R}[39]{RS} Deep SSL/TLS Audit
+    {R}[40]{RS} OSINT Passive Recon       {R}[41]{RS} Service Brute (MySQL/Redis/RDP)
 
-    def sec1(title):
-        return f"  {C}║{RS} {BR}{M}{title:<{wF - _wide(title)}}{RS} {C}║{RS}"
-
-    def row1(n, label):
-        nc  = _nc(n)
-        pfx = f"[{n}] "
-        pad = wF - len(pfx) - _wide(label)
-        return f"  {C}║{RS} {nc}{pfx}{RS}{C}{label:<{pad}} {C}║{RS}"
-
-    def row_hint(text):
-        return f"  {C}║{RS} {DM}{text:<{wF - _wide(text)}}{RS} {C}║{RS}"
-
-    # ── build lines ──────────────────────────────────────────────────────
-    return '\n'.join([
-        "",
-        # RECON ←→ NETWORK
-        TOP2,
-        sec2(T("sh_recon"),   T("sh_network")),
-        MID2,
-        row2('1', T("sm1"),   '6', T("sm6")),
-        row2('2', T("sm2"),   '7', T("sm7")),
-        row2('3', T("sm3"),   '8', T("sm8")),
-        row2('4', T("sm4"),   '9', T("sm9")),
-        row2('5', T("sm5")),
-        # WEB ←→ EXPLOIT
-        MID2,
-        sec2(T("sh_web"),     T("sh_exploit")),
-        MID2,
-        row2('10', T("sm10"), '14', T("sm14")),
-        row2('11', T("sm11"), '15', T("sm15")),
-        row2('12', T("sm12"), '16', T("sm16")),
-        row2('13', T("sm13")),
-        # AUTOMATION (single col)
-        MRG,
-        sec1(T("sh_auto")),
-        MID1,
-        row1('17', T("sm17")),
-        row1('18', T("sm18")),
-        # AI ANALYSIS (single col)
-        MID1,
-        sec1(T("sh_ai")),
-        MID1,
-        row1('19', T("sm19")),
-        row1('20', T("sm20")),
-        row1('21', T("sm21")),
-        row1('22', T("sm22")),
-        row1('23', T("sm23")),
-        # STEALTH & OPSEC (single col)
-        MID1,
-        sec1(T("sh_stealth")),
-        MID1,
-        row1('24', T("sm24")),
-        row1('25', T("sm25")),
-        row1('26', 'CF WAF Bypass (solve challenge)'),
-        row1('27', 'CF Bypass + Inject into session'),
-        # ADVANCED BROWSER ENGINE (single col)
-        MID1,
-        sec1("ADVANCED BROWSER ENGINE"),
-        MID1,
-        row1('28', 'JS-Rendered Page Analysis'),
-        row1('29', 'Network Traffic Capture'),
-        row1('30', 'Form Login Tester'),
-        row1('31', 'Screenshot Recon'),
-        row1('32', 'Browser Fingerprint Probe'),
-        row1('33', 'Cookie & Session Harvester'),
-        row1('34', 'JS Secret & Token Scanner'),
-        # EXIT + NAV
-        MID1,
-        row1('0', T("menu_exit")),
-        row_hint(T("m_nav_hint")),
-        BOT,
-        "",
-    ])
+  {DM}───────────────────────────────────────────────────────{RS}
+    {R}[00]{RS} {T("menu_exit")}
+"""
 
 
 def show_banner():

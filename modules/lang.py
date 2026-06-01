@@ -101,8 +101,8 @@ _STRINGS = {
     # ── Prompts & questions ────────────────────────────────────────────────────
     "prompt_target":       {"en": "Enter target  (URL / IP / domain)",
                             "sw": "Ingiza target  (URL / IP / domain)"},
-    "prompt_select":       {"en": "Select option  [0–25 | T=target | K=AI key | S=stealth]",
-                            "sw": "Chagua chaguo  [0–25 | T=target | K= Key ya AI | S=Stealth]"},
+    "prompt_select":       {"en": "Select option  [0–34 | T=target | K=AI key | S=stealth]",
+                            "sw": "Chagua chaguo  [0–34 | T=target | K= Key ya AI | S=Stealth]"},
     "q_set_target_now":    {"en": "Set a target now?",
                             "sw": "Weka target sasa?"},
     "q_use_ssl":           {"en": "Use HTTPS/SSL?",
