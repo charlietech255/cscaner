@@ -110,6 +110,9 @@ def _build_menu() -> str:
     {R}[37]{RS} NVD Manual CVE Lookup     {R}[39]{RS} Deep SSL/TLS Audit
     {R}[40]{RS} OSINT Passive Recon       {R}[41]{RS} Service Brute (MySQL/Redis/RDP)
 
+{BR}{C}  ● v3.0 — CRAWLER & AUTH{RS}
+    {M}[42]{RS} Web Crawler (Discovery)   {M}[43]{RS} Auth / Session Config
+
   {DM}───────────────────────────────────────────────────────{RS}
     {R}[00]{RS} {T("menu_exit")}
 """

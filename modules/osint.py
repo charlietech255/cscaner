@@ -345,10 +345,303 @@ def hibp_domain_check(domain: str, hibp_key: str = None) -> list:
     return breaches
 
 
+# ── AlienVault OTX (no API key needed for basic lookups) ──────────────────────
+def alienvault_otx(target: str) -> dict:
+    """Query AlienVault Open Threat Exchange for passive DNS, malware, and URL data."""
+    section("ALIENVAULT OTX THREAT INTELLIGENCE")
+    hostname = _extract_hostname(target)
+    domain   = _extract_domain(hostname)
+    info(f"Querying OTX for: {BR}{W}{domain}{RS}\n")
+
+    result = {'passive_dns': [], 'malware': [], 'urls': [], 'pulses': 0}
+
+    # Passive DNS
+    r = _get(f'https://otx.alienvault.com/api/v1/indicators/domain/{domain}/passive_dns',
+             headers={'Accept': 'application/json'})
+    if r and r.status_code == 200:
+        data = r.json()
+        records = data.get('passive_dns', [])
+        seen = set()
+        for rec in records[:50]:
+            addr = rec.get('address', '')
+            hostname_rec = rec.get('hostname', '')
+            if addr and addr not in seen:
+                seen.add(addr)
+                result['passive_dns'].append({
+                    'hostname': hostname_rec, 'address': addr,
+                    'first': rec.get('first', ''), 'last': rec.get('last', ''),
+                    'record_type': rec.get('record_type', ''),
+                })
+        if result['passive_dns']:
+            ok(f"Passive DNS: {len(result['passive_dns'])} unique IP(s)")
+            for rec in result['passive_dns'][:10]:
+                rtype = rec.get('record_type', 'A')
+                print(f"  {G}•{RS} {W}{rec['hostname']}{RS} → {C}{rec['address']}{RS}  {DM}({rtype}, last: {rec['last'][:10]}){RS}")
+        else:
+            info("No passive DNS records found.")
+
+    # URL list
+    r2 = _get(f'https://otx.alienvault.com/api/v1/indicators/domain/{domain}/url_list',
+              headers={'Accept': 'application/json'})
+    if r2 and r2.status_code == 200:
+        data2 = r2.json()
+        urls = data2.get('url_list', [])
+        result['urls'] = [u.get('url', '') for u in urls[:30]]
+        if urls:
+            ok(f"Historical URLs: {len(urls)} found")
+            for u in urls[:5]:
+                print(f"  {Y}•{RS} {DM}{u.get('url', '')[:70]}{RS}  {DM}({u.get('httpcode', '?')}){RS}")
+
+    # General info (pulse count = community threat reports)
+    r3 = _get(f'https://otx.alienvault.com/api/v1/indicators/domain/{domain}/general',
+              headers={'Accept': 'application/json'})
+    if r3 and r3.status_code == 200:
+        data3 = r3.json()
+        result['pulses'] = data3.get('pulse_info', {}).get('count', 0)
+        if result['pulses'] > 0:
+            alert(f"This domain appears in {BR}{R}{result['pulses']}{RS} OTX threat pulse(s)!")
+        else:
+            ok("Domain not flagged in any OTX threat pulses.")
+
+    return result
+
+
+# ── URLScan.io (free, no key for search) ──────────────────────────────────────
+def urlscan_lookup(target: str) -> dict:
+    """Search URLScan.io for historical scans of the target domain."""
+    section("URLSCAN.IO HISTORICAL SCAN DATA")
+    hostname = _extract_hostname(target)
+    domain   = _extract_domain(hostname)
+    info(f"Searching URLScan.io for: {BR}{W}{domain}{RS}\n")
+
+    result = {'scans': [], 'technologies': set(), 'ips': set(), 'asns': set()}
+
+    r = _get(f'https://urlscan.io/api/v1/search/',
+             params={'q': f'domain:{domain}', 'size': 20})
+    if not r or r.status_code != 200:
+        warn("URLScan.io query failed or returned no results.")
+        return result
+
+    data = r.json()
+    results_list = data.get('results', [])
+
+    if not results_list:
+        info("No historical scans found for this domain.")
+        return result
+
+    ok(f"Found {data.get('total', len(results_list))} historical scan(s)")
+
+    for scan in results_list[:10]:
+        page = scan.get('page', {})
+        task = scan.get('task', {})
+        stats = scan.get('stats', {})
+
+        url = page.get('url', '')
+        ip = page.get('ip', '')
+        asn = page.get('asn', '')
+        server = page.get('server', '')
+        status = page.get('status', '')
+        ts = task.get('time', '')[:10]
+
+        result['scans'].append({'url': url, 'ip': ip, 'server': server, 'status': status, 'date': ts})
+        if ip: result['ips'].add(ip)
+        if asn: result['asns'].add(asn)
+        if server: result['technologies'].add(server)
+
+        print(f"  {C}•{RS} {W}{url[:50]}{RS}  {DM}IP:{ip}  Server:{server}  ({ts}){RS}")
+
+    result['technologies'] = list(result['technologies'])
+    result['ips'] = list(result['ips'])
+    result['asns'] = list(result['asns'])
+
+    if result['ips']:
+        print(f"\n  {BR}{M}Unique IPs:{RS} {', '.join(result['ips'][:10])}")
+    if result['technologies']:
+        print(f"  {BR}{M}Servers:{RS} {', '.join(result['technologies'][:10])}")
+
+    return result
+
+
+# ── ThreatCrowd (free, no key) ────────────────────────────────────────────────
+def threatcrowd_lookup(target: str) -> dict:
+    """Query ThreatCrowd for domain intelligence."""
+    section("THREATCROWD DOMAIN INTELLIGENCE")
+    hostname = _extract_hostname(target)
+    domain   = _extract_domain(hostname)
+    info(f"Querying ThreatCrowd for: {BR}{W}{domain}{RS}\n")
+
+    result = {'subdomains': [], 'resolutions': [], 'emails': [], 'references': []}
+
+    r = _get(f'https://www.threatcrowd.org/searchApi/v2/domain/report/',
+             params={'domain': domain})
+    if not r or r.status_code != 200:
+        warn("ThreatCrowd query failed.")
+        return result
+
+    try:
+        data = r.json()
+    except Exception:
+        warn("Could not parse ThreatCrowd response.")
+        return result
+
+    if data.get('response_code') != '1':
+        info("No ThreatCrowd data for this domain.")
+        return result
+
+    subs = data.get('subdomains', [])
+    if subs:
+        result['subdomains'] = subs[:50]
+        ok(f"Subdomains: {len(subs)} found")
+        for s in subs[:10]:
+            print(f"  {G}•{RS} {W}{s}{RS}")
+        if len(subs) > 10:
+            print(f"  {DM}... and {len(subs) - 10} more{RS}")
+
+    resolutions = data.get('resolutions', [])
+    if resolutions:
+        result['resolutions'] = resolutions[:30]
+        ok(f"DNS resolutions: {len(resolutions)} historical record(s)")
+        for res in resolutions[:5]:
+            ip = res.get('ip_address', '')
+            date = res.get('last_resolved', '')
+            print(f"  {C}•{RS} {W}{ip}{RS}  {DM}(last: {date}){RS}")
+
+    emails_found = data.get('emails', [])
+    if emails_found:
+        result['emails'] = emails_found[:20]
+        ok(f"Emails: {len(emails_found)} found")
+
+    refs = data.get('references', [])
+    if refs:
+        result['references'] = refs[:10]
+        warn(f"Malware references: {len(refs)} link(s) — domain may be flagged")
+
+    return result
+
+
+# ── crt.sh enhanced (Certificate Transparency — free) ─────────────────────────
+def crtsh_deep(target: str) -> dict:
+    """Deep Certificate Transparency search via crt.sh."""
+    section("CERTIFICATE TRANSPARENCY DEEP SEARCH")
+    hostname = _extract_hostname(target)
+    domain   = _extract_domain(hostname)
+    info(f"Querying crt.sh for: {BR}{W}{domain}{RS}\n")
+
+    result = {'subdomains': [], 'issuers': set(), 'wildcards': [], 'expired': []}
+
+    r = _get(f'https://crt.sh/?q=%25.{domain}&output=json', timeout=15)
+    if not r or r.status_code != 200:
+        warn("crt.sh query failed or timed out.")
+        return result
+
+    try:
+        entries = r.json()
+    except Exception:
+        warn("Could not parse crt.sh response.")
+        return result
+
+    names = set()
+    for entry in entries:
+        raw = entry.get('name_value', '')
+        issuer = entry.get('issuer_name', '')
+        not_after = entry.get('not_after', '')
+        for n in raw.split('\n'):
+            n = n.strip().lstrip('*.')
+            if n and n.endswith(domain) and n != domain:
+                names.add(n.lower())
+            if n.startswith('*.'):
+                result['wildcards'].append(n)
+        if issuer:
+            result['issuers'].add(issuer[:60])
+
+    result['subdomains'] = sorted(names)
+    result['issuers'] = list(result['issuers'])
+    result['wildcards'] = list(set(result['wildcards']))[:10]
+
+    if names:
+        ok(f"CT logs reveal {len(names)} unique subdomain(s)")
+        for s in sorted(names)[:15]:
+            print(f"  {G}•{RS} {W}{s}{RS}")
+        if len(names) > 15:
+            print(f"  {DM}... and {len(names) - 15} more{RS}")
+    else:
+        info("No subdomains found in CT logs.")
+
+    if result['issuers']:
+        print(f"\n  {BR}{M}Certificate Issuers:{RS}")
+        for iss in list(result['issuers'])[:5]:
+            print(f"  {C}•{RS} {DM}{iss}{RS}")
+
+    return result
+
+
+# ── DNS history via SecurityTrails-like free sources ──────────────────────────
+def passive_dns_aggregate(target: str) -> dict:
+    """Aggregate passive DNS from multiple free sources."""
+    section("PASSIVE DNS AGGREGATION")
+    hostname = _extract_hostname(target)
+    domain   = _extract_domain(hostname)
+    info(f"Aggregating passive DNS for: {BR}{W}{domain}{RS}\n")
+
+    all_ips = set()
+    all_subs = set()
+    result = {'ips': [], 'subdomains': []}
+
+    # Source 1: HackerTarget
+    r = _get(f'https://api.hackertarget.com/hostsearch/?q={domain}', timeout=10)
+    if r and r.status_code == 200 and 'error' not in r.text.lower():
+        for line in r.text.strip().splitlines():
+            parts = line.split(',')
+            if len(parts) >= 2:
+                sub = parts[0].strip()
+                ip = parts[1].strip()
+                all_subs.add(sub)
+                all_ips.add(ip)
+        if all_subs:
+            ok(f"HackerTarget: {len(all_subs)} host(s) found")
+
+    # Source 2: RapidDNS
+    r2 = _get(f'https://rapiddns.io/subdomain/{domain}?full=1', timeout=10)
+    if r2 and r2.status_code == 200:
+        import re as _re
+        matches = _re.findall(r'<td>([a-zA-Z0-9._-]+\.' + _re.escape(domain) + r')</td>', r2.text)
+        for m in matches:
+            all_subs.add(m.lower())
+        if matches:
+            ok(f"RapidDNS: {len(matches)} additional subdomain(s)")
+
+    # Source 3: Riddler.io
+    r3 = _get(f'https://riddler.io/search/exportcsv?q=pld:{domain}', timeout=10)
+    if r3 and r3.status_code == 200:
+        for line in r3.text.strip().splitlines()[1:]:
+            parts = line.split(',')
+            for part in parts:
+                part = part.strip().strip('"')
+                if part.endswith(domain) and '.' in part:
+                    all_subs.add(part.lower())
+
+    result['ips'] = sorted(all_ips)
+    result['subdomains'] = sorted(all_subs)
+
+    if all_subs:
+        ok(f"Total unique subdomains: {len(all_subs)}")
+        for s in sorted(all_subs)[:15]:
+            print(f"  {G}•{RS} {W}{s}{RS}")
+        if len(all_subs) > 15:
+            print(f"  {DM}... and {len(all_subs) - 15} more{RS}")
+
+    if all_ips:
+        print(f"\n  {BR}{M}Unique IPs:{RS}")
+        for ip in sorted(all_ips)[:10]:
+            print(f"  {C}•{RS} {W}{ip}{RS}")
+
+    return result
+
+
 # ── Master OSINT function ─────────────────────────────────────────────────────
 def osint_recon(target: str, shodan_key: str = None, github_token: str = None,
                 hibp_key: str = None) -> dict:
-    """Run all passive OSINT checks."""
+    """Run all passive OSINT checks — both free and API-key-gated."""
     section("PASSIVE OSINT RECON SUITE")
     hostname = _extract_hostname(target)
     domain   = _extract_domain(hostname)
@@ -356,27 +649,61 @@ def osint_recon(target: str, shodan_key: str = None, github_token: str = None,
 
     results = {}
 
+    # ── Free sources (no API key needed) ──────────────────────────────────────
+    info(f"{BR}{C}Running free OSINT sources...{RS}\n")
+
+    results['ct_deep']       = crtsh_deep(target)
+    results['passive_dns']   = passive_dns_aggregate(target)
+    results['alienvault']    = alienvault_otx(target)
+    results['urlscan']       = urlscan_lookup(target)
+    results['threatcrowd']   = threatcrowd_lookup(target)
+    results['wayback']       = wayback_endpoints(target)
+    results['emails']        = email_harvest(target)
+
+    # ── API-key sources ───────────────────────────────────────────────────────
     if shodan_key:
         results['shodan'] = shodan_lookup(target, shodan_key)
     else:
-        info("Shodan skipped (no API key). Add one in session config.")
+        info("Shodan skipped (no API key).")
 
-    results['wayback']  = wayback_endpoints(target)
-    results['github']   = github_dork(domain, github_token)
-    results['emails']   = email_harvest(target)
+    results['github'] = github_dork(domain, github_token)
 
     if hibp_key:
         results['hibp'] = hibp_domain_check(domain, hibp_key)
     else:
         info("HIBP breach check skipped (no API key).")
 
+    # ── OSINT summary ─────────────────────────────────────────────────────────
+    section(f"OSINT SUMMARY — {domain}")
+    total_subs = set()
+    total_ips = set()
+    for key in ('ct_deep', 'passive_dns', 'threatcrowd'):
+        data = results.get(key, {})
+        total_subs.update(data.get('subdomains', []))
+    for key in ('passive_dns', 'urlscan'):
+        data = results.get(key, {})
+        total_ips.update(data.get('ips', []))
+
+    ok(f"Total unique subdomains discovered : {BR}{G}{len(total_subs)}{RS}")
+    ok(f"Total unique IPs discovered        : {BR}{G}{len(total_ips)}{RS}")
+    ok(f"Email addresses found              : {BR}{G}{len(results.get('emails', []))}{RS}")
+    ok(f"Wayback URLs archived              : {BR}{G}{len(results.get('wayback', []))}{RS}")
+
+    otx = results.get('alienvault', {})
+    if otx.get('pulses', 0) > 0:
+        alert(f"OTX threat pulses                  : {BR}{R}{otx['pulses']}{RS}")
+    tc = results.get('threatcrowd', {})
+    if tc.get('references'):
+        alert(f"ThreatCrowd malware references     : {BR}{R}{len(tc['references'])}{RS}")
+
     return results
 
 
 # ── Interactive menu ──────────────────────────────────────────────────────────
 def menu_osint(session: dict) -> dict:
-    section("OSINT — CONFIGURE API KEYS")
-    info("Keys are optional. Leave blank to skip that source.\n")
+    section("OSINT — PASSIVE RECONNAISSANCE")
+    info("CSCAN will query multiple free OSINT sources automatically.")
+    info("API keys are optional — more sources unlock with keys.\n")
 
     shodan  = input(f"  {BR}{W}Shodan API Key  (https://account.shodan.io)  : {RS}").strip() or None
     github  = input(f"  {BR}{W}GitHub Token    (optional, for higher limits) : {RS}").strip() or None

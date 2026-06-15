@@ -1,227 +1,154 @@
-# CSCAN (C Scanner by Charlie Tech)
+# CSCAN Security Framework (v3.0)
 
-**CSCAN** is a cybersecurity scanner and pentesting toolkit made by Charlie Tech. It works great on **Termux** (Android) and also runs smooth on **Kali Linux** and other Debian-based systems.
+**Karibu sana!** Welcome to CSCAN. 
 
-It comes with an easy-to-use command-line interface, built-in wordlists, plenty of scanning features, a fingerprint-resistant **Advanced Browser Engine (camoufox-based)**, and an active **Stealth & WAF-Evasion Engine** so you can work without raising alarms. Whether you are doing bug bounty hunting, managing servers, or running a pentest — CSCAN has got you sorted.
+CSCAN is a professional, all-in-one security testing framework designed to make your reconnaissance and vulnerability scanning work easier and more effective. Whether you are a security researcher, a system administrator, or an ethical hacker, CSCAN provides you with the right tools to identify weaknesses in your systems before the bad actors do. 
 
----
-
-## Features
-
-- **Web Vulnerability Scanning** — Scan for sensitive exposed paths and misconfigurations.
-- **HTTP Header Auditing** — Check for security headers and information disclosure.
-- **Directory & File Brute Forcing** — Discover hidden directories using custom wordlists.
-- **CMS Fingerprinting** — Identify technologies like WordPress, Joomla, Drupal, and more.
-- **Reconnaissance Suite** — Subdomain enumeration, DNS/WHOIS lookups, and GeoIP location tracking.
-- **Exploitation & Credential Auditing** — Built-in SSH brute-forcer, FTP anonymous login checker, and HTTP Basic Auth brute-forcing.
-- **Stealth & WAF Evasion** — Proxy/Tor support, request jitter, User-Agent rotation, path mutation, adaptive backoff, and nmap-integrated timing profiles.
-- **Advanced Browser Engine (camoufox)** — JS-rendered page source/DOM extraction, full network traffic capture (HAR / WebSocket / dynamic API endpoint discovery), cookie harvesting, dynamic form login testing, visual screenshot recon, browser fingerprint probing, and client-side JS secret scanning.
-- **Bilingual Support** — Interface available in English and Kiswahili.
-- **Extensive Built-in Wordlists** — Pre-loaded with over 1,000+ entries for sensitive paths, subdomains, directory bruteforcing, and credentials.
-- **AI Security Analyst Integration** — Gemini API-powered scan analysis, host overview, CVE lookup assistant, and professional PDF/text penetration testing report generation.
+We have designed CSCAN to be powerful but very simple to use. It handles everything from finding subdomains and gathering open-source intelligence (OSINT) to crawling websites and testing for vulnerabilities like XSS and SQL Injection.
 
 ---
 
-## Installation
+## 🌟 Key Features
 
-### On Termux
+*   **Deep Web Crawler:** Discovers hidden pages, forms, and parameters automatically.
+*   **Active Vulnerability Scanner:** Tests for XSS, SQLi, SSRF, and Command Injection using real data found by the crawler.
+*   **Live CVE Mapping:** Checks your server software against the live NIST National Vulnerability Database to see if there are any known bugs.
+*   **Passive OSINT Reconnaissance:** Gathers intelligence from free sources (like AlienVault, URLScan, and ThreatCrowd) without ever touching the target directly.
+*   **Authenticated Scanning:** Allows you to put your session cookies so you can scan pages that require a login.
+*   **Stealth & WAF Evasion:** Built-in techniques to safely bypass basic Web Application Firewalls (WAF) like Cloudflare.
 
-CSCAN comes with an installer script that handles everything for you — it checks your environment, installs the dependencies (`python`, `git`, `nmap`, and pip packages), and creates a universal shortcut.
+---
 
-1. **Clone the repo:**
-   ```bash
-   git clone https://github.com/charlietech255/cscaner.git
-   cd cscaner
-   ```
+## ⚙️ Installation Guide
 
-2. **Make the installer executable and run it:**
-   ```bash
-   chmod +x install.sh
-   bash install.sh
-   ```
+Kindly follow the steps below depending on the system you are using. It is very simple to set up.
 
-3. **Done!**
-   The install script maps the tool to your binaries. Once installed, just run it from anywhere.
+### 🐧 1. Installing on Linux (Ubuntu, Kali, Debian, etc.)
 
-#### Dynamic Browser Engine Dependencies (Optional, required for WAF Bypass / JS Render modules)
-If you wish to use the Advanced Browser Engine:
+Linux is the most recommended environment for running CSCAN smoothly.
+
+**Step 1:** Open your terminal and clone the repository:
 ```bash
-pip install "camoufox[geoip]"
-python -m camoufox fetch
+git clone https://github.com/your-repo/cscaner.git
+cd cscaner
 ```
 
-### On Kali Linux
-
-CSCAN runs natively on Kali. Make sure you have these system packages, then run the installer:
-
+**Step 2:** Make the installation script executable and run it:
 ```bash
-sudo apt update
-sudo apt install python3 python3-pip git nmap -y
 chmod +x install.sh
-bash install.sh
+./install.sh
 ```
 
-> **Note:** The `nmap` binary is needed for optional SYN/stealth port scans. Root privileges are required for true SYN scans (`-sS`). Without root, CSCAN falls back gracefully to stealth TCP connect scans.
+**Step 3:** Download the professional wordlists to make your scans accurate:
+```bash
+chmod +x fetch_wordlists.sh
+./fetch_wordlists.sh
+```
+
+**Step 4:** You can now start CSCAN by typing:
+```bash
+python3 cscan.py
+```
 
 ---
 
-## Usage
+### 📱 2. Installing on Termux (Android)
 
-If you installed using `install.sh`, you can run the tool from anywhere:
+For our mobile users who want to do security assessments on the go, Termux is highly supported.
 
+**Step 1:** Update your Termux packages first:
 ```bash
-cscan
+pkg update && pkg upgrade -y
 ```
 
-Or run it directly:
+**Step 2:** Install the required dependencies:
+```bash
+pkg install python git rust binutils -y
+```
 
+**Step 3:** Clone the project and enter the folder:
+```bash
+git clone https://github.com/your-repo/cscaner.git
+cd cscaner
+```
+
+**Step 4:** Install the Python requirements and fetch the wordlists:
+```bash
+pip install -r requirements.txt
+chmod +x fetch_wordlists.sh
+./fetch_wordlists.sh
+```
+
+**Step 5:** Start CSCAN:
 ```bash
 python cscan.py
 ```
 
-When you launch, you will pick your language, agree to the legal disclaimer, and then you get an interactive menu where you choose what to scan and which module to use.
+---
 
-### Custom Wordlists
+### 🪟 3. Installing on Windows
 
-By default, CSCAN uses wordlists from the `wordlists/` folder. You can modify, update, or add your own payloads and dictionaries there — it is that simple.
+You can run CSCAN on Windows using Python, or preferably using Windows Subsystem for Linux (WSL) for the best experience. 
+
+**Option A: Using Python directly**
+1. Download and install Python from the [official website](https://www.python.org/downloads/). Kindly make sure to check the box that says **"Add Python to PATH"** during installation.
+2. Open your Command Prompt (CMD) or PowerShell and clone the repository:
+   ```cmd
+   git clone https://github.com/your-repo/cscaner.git
+   cd cscaner
+   ```
+3. Install the requirements:
+   ```cmd
+   pip install -r requirements.txt
+   ```
+4. Start the tool:
+   ```cmd
+   python cscan.py
+   ```
+*(Note: To get the professional wordlists on Windows, you may need to use Git Bash to run `./fetch_wordlists.sh`)*
+
+**Option B: Using WSL (Highly Recommended)**
+If you have WSL installed (Ubuntu on Windows), simply open your WSL terminal and follow the **Linux installation steps** above. It works perfectly!
 
 ---
 
-## Keeping CSCAN Updated
+## 🚀 How to Use CSCAN
 
-### Update Without Recloning
+Using CSCAN is very straightforward. When you run `python3 cscan.py`, you will be greeted by a beautiful, interactive menu.
 
-You don't need to delete and re-clone the repository to get updates. Simply pull the latest changes:
+**Step-by-step Usage:**
+1. **Set your target:** Press `T` on your keyboard and enter the website or IP address you want to scan (for example: `example.com`).
+2. **Run OSINT (Menu 40):** We advise you to start with passive reconnaissance. This will gather information from public databases without alerting the target.
+3. **Run the Web Crawler (Menu 42):** This is a very important step. Let CSCAN spider the website to find all hidden links, forms, and JavaScript secrets.
+4. **Configure Authentication (Menu 43):** If the website requires a login, go here to paste your session cookies.
+5. **Run Active Scan (Menu 35):** Finally, run the active vulnerability scanner. CSCAN will use the data from the crawler to test for serious bugs.
+6. **Auto Scan (Menu 17):** If you are in a hurry, you can choose the Auto Scan option, and CSCAN will run all the necessary steps automatically for you.
 
+---
+
+## 🔄 How to Stay Updated
+
+Security is always changing, and we frequently update CSCAN with new features and better payloads. To make sure you always have the latest version, kindly do the following:
+
+Open your terminal, go into the CSCAN folder, and pull the latest changes:
 ```bash
 cd cscaner
 git pull origin main
 ```
-
-This will download and merge all new features, bug fixes, and security patches without losing your local wordlists or configurations.
-
-### Check for Available Updates
-
-Before pulling, see what's new:
-
+If we have added new libraries, you may also need to update the requirements:
 ```bash
-git fetch origin
-git log --oneline HEAD..origin/main
+pip install -r requirements.txt --upgrade
 ```
 
-This shows you what commits are waiting to be pulled from the main repository.
-
-### Revert to a Previous Version (if needed)
-
-If an update breaks something, you can revert to a previous version:
-
-```bash
-git log --oneline -10          # View recent commits
-git checkout <commit-hash>     # Go back to a specific commit
-```
-
-Or return to the latest version:
-
-```bash
-git checkout main
-git pull origin main
-```
+It is a good practice to run `git pull` every week so that you do not miss out on any important security updates.
 
 ---
 
-## Stealth Mode & WAF Evasion
+## ⚠️ Important Legal Disclaimer
 
-CSCAN has a proper **Stealth & OPSEC** engine built in to reduce your detection footprint and get past basic WAF rules.
+**Please read this carefully:** CSCAN is an advanced tool that generates real cyber-attacks for testing purposes. You are strictly advised to use this tool **only** on systems that you own, or systems where you have been given explicit, written permission to test (such as bug bounty programs or authorized penetration tests).
 
-### How to Enable
-
-From the main menu:
-- **`[25] Toggle Stealth`** — Quick on/off switch (or press `S` anywhere in the menu).
-- **`[24] Stealth Config`** — Fine-tune every stealth parameter.
-
-### Available Stealth Features
-
-| Feature | What it Does |
-|---------|-------------|
-| **Proxy / Tor Support** | Route all HTTP(S) traffic through `http://`, `socks4://`, or `socks5://` proxies (e.g., Tor at `socks5://127.0.0.1:9050`). |
-| **Request Jitter** | Add random delays between requests (`min`–`max` seconds) to avoid rate-limiting and traffic spikes. |
-| **Realistic User-Agent Rotation** | Automatically rotate real browser UAs (Chrome, Firefox, Safari, Edge) on every request. |
-| **Randomized Headers** | Inject realistic `Referer`, `Accept-Language`, and `X-Forwarded-For` headers to mimic organic traffic. |
-| **Path Mutation** | Mutate brute-force paths with URL encoding, double slashes, case variations, and null-byte suffixes to evade simple path filters. |
-| **Adaptive Backoff** | If the target returns `403/429/502/503`, CSCAN automatically increases delays to reduce blocking. |
-| **Timing Profiles** | Choose scan speed profiles: `paranoid`, `sneaky`, `polite`, `normal`, `aggressive`, `insane`. Slower profiles use fewer threads and longer timeouts. |
-| **nmap Integration** | Optionally delegate port scans to the system `nmap` binary when available, enabling advanced timing and scan techniques. |
-| **SSH Brute Delay** | Introduce per-attempt delays during SSH credential audits when stealth is active. |
-| **Cookie Persistence** | Re-use session cookies across requests to behave more like a real browser session. |
+Using CSCAN on unauthorized targets is illegal and can lead to serious consequences. Be a professional, act responsibly, and happy hunting!
 
 ---
-
-## 🛡️ Smart WAF Detection & Auto-Evasion (NEW!)
-
-CSCAN now features an **intelligent, automated WAF detection and evasion pipeline** integrated directly into the **Full Auto-Scan (Option 17)**. 
-
-### How It Works Under The Hood
-When you run the **Full Auto-Scan Pipeline**, CSCAN executes the following logic automatically:
-
-1. **Pre-Scan Active WAF Probe** — Performs a silent HTTP verification probe on the target to identify WAF signatures. Supported platforms include:
-   - **Cloudflare** (`cf-ray`, `__cfduid`, etc.)
-   - **Akamai** (`x-akamai-transformed`)
-   - **Sucuri** (`x-sucuri-id`)
-   - **AWS Shield / WAF** (`x-amzn-requestid`, `awselb`)
-   - **Incapsula** (`incap_ses`, `visid_incap`)
-   - **Generic WAF / Firewall** (intercepts typical block signatures/error messages)
-2. **Auto-Stealth Escalation** — If any WAF is detected, the scan posture is escalated instantly:
-   - Stealth Mode is turned **ON** automatically.
-   - Timing profile is lowered to **`sneaky`** speed (limiting worker threads to a max of 10) to prevent rate limits.
-   - Jitter is enabled with randomized delays between `1.0s` and `3.5s`.
-   - **Path Mutation** is automatically enabled for all subsequent web scans.
-3. **Automated Cloudflare Turnstile/UAM Bypass** — If Cloudflare is detected (and `camoufox` dependencies are active), CSCAN automatically launches a fingerprint-hardened background browser to solve the security challenge, extracts the valid `cf_clearance` cookie, and injects it along with the matching user-agent directly into the active stealth session.
-4. **Adaptive Backoff & Mutant Retry Recovery** — If a web vulnerability scanning step returns blocked responses (`403` or `429` status codes), CSCAN backs off automatically (sleeping up to 12s) and automatically retries the failed step using a restructured, mutated path set and further reduced thread concurrency.
-
-You do not need to configure anything. Just select Option `17` from the menu, and CSCAN will handle WAF identification and stealth parameters automatically.
-
----
-
-## How it Works
-
-- **Python is the Boss:** The whole tool is written in Python 3. We use standard libraries plus powerful ones like `requests` for talking to web servers, `paramiko` for testing SSH doors, and `python-whois` to dig up domain secrets.
-- **Multithreading:** Python's `ThreadPoolExecutor` is used throughout. Instead of sending one request and waiting, CSCAN sends many requests at the same time. This makes directory brute-forcing and sensitive path scanning really fast.
-- **Stealth Engine (`modules/stealth.py`):** A centralized session manager wraps every HTTP request with proxy support, header rotation, jitter, and WAF detection. Network scans inherit timing profiles and can fall back to `nmap` when available.
-- **Brute-Forcing:** We use large, carefully selected dictionaries stored in the `wordlists/` folder. CSCAN picks words from these lists and tests them against the target. When stealth mode is on, paths are optionally mutated to bypass naive filters.
-- **Smart Reconnaissance:** DNS lookups, WHOIS queries, and GeoIP tracking are performed using both system sockets and public APIs, now routed through your configured proxy when stealth is enabled.
-- **Termux Native:** We designed the UI specifically for mobile screens running Termux. Clean terminal color codes and responsive table layouts keep everything readable, even when you are on the go with your phone.
-
-Simply put, CSCAN does all the heavy lifting so you can focus on securing the system. Karibu sana to explore the code!
-
----
-
-## Testing & Compatibility
-
-CSCAN is tested on:
-- **Termux** (Android 12+)
-- **Kali Linux** (rolling release, x86_64 & ARM64)
-
-All core features work without root. Advanced SYN scanning via `nmap` requires root privileges (standard for raw sockets on Linux/Android).
-
----
-
-## Contributing
-
-Contributions, issues, and feature requests are always welcome! If you want to help make CSCAN even better:
-
-1. **Fork** the project.
-2. Create your **Feature Branch** (`git checkout -b feature/AmazingFeature`).
-3. **Commit** your changes (`git commit -m 'Add some AmazingFeature'`).
-4. **Push** to the branch (`git push origin feature/AmazingFeature`).
-5. Open a **Pull Request**.
-
-Please make sure your code follows the existing structure inside the `modules/` directory.
-
----
-
-## Legal Disclaimer
-
-**CSCAN is designed exclusively for educational purposes and authorized security auditing.**
-The creator (Charlie Tech) assumes no liability and is not responsible for any misuse or damage caused by this program. You must make sure you have explicit, documented permission from the target owner before running any scans or attacks.
-
-**Hack Responsibly.**
+*Developed with dedication for the cybersecurity community.*

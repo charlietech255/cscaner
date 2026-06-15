@@ -93,6 +93,10 @@ from modules.udp_scanner  import udp_scan_suite
 from modules.ssl_audit    import ssl_deep_audit
 from modules.osint        import menu_osint
 from modules.service_brute import service_brute_suite
+# ── v3.0 — Crawler & Auth ────────────────────────────────────────────────────
+from modules.crawler      import crawl_target
+from modules.crawler      import set_stealth_session as crawler_set_stealth
+from modules.crawler      import set_insecure_ssl as crawler_set_insecure_ssl
 
 # ── Session state ─────────────────────────────────────────────────────────────
 SESSION = {
@@ -103,6 +107,10 @@ SESSION = {
     'log':         [],
     'start_time':  None,
     'gemini_key':  None,   # Gemini API key (stored in-memory only)
+    'auth': {
+        'cookies':     {},     # dict of cookie name→value for authenticated scanning
+        'header':      None,   # Authorization header value (e.g. 'Bearer xxx')
+    },
     'stealth': {
         'enabled':      False,
         'proxy':        None,
@@ -246,6 +254,7 @@ def _apply_stealth():
         recon_set_stealth(None)
         exploit_set_stealth(None)
         activevuln_set_stealth(None)
+        crawler_set_stealth(None)
 
 
 def show_status():
@@ -487,7 +496,15 @@ async def handle_active_vuln():
     t = get_target()
     if not t: return
     _apply_stealth()
-    res = await _run_sync(active_vuln_scan, t, SESSION['use_ssl'])
+    crawl_data = SESSION['results'].get('crawl', None)
+    cookies = SESSION['auth'].get('cookies') or None
+    if not crawl_data:
+        warn("No crawl data found. Run the Web Crawler first for best results.")
+        if prompt_yes("Run the Web Crawler now before scanning?"):
+            await handle_crawl()
+            crawl_data = SESSION['results'].get('crawl', None)
+    res = await _run_sync(active_vuln_scan, t, SESSION['use_ssl'],
+                          crawl_data=crawl_data, cookies=cookies)
     SESSION['results']['active_vuln'] = res
     pause()
 
@@ -563,8 +580,100 @@ async def handle_service_brute():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  WAF AUTO-EVASION HELPER  (used by full auto-scan pipeline)
+#  v3.0 HANDLERS — CRAWLER & AUTH
 # ─────────────────────────────────────────────────────────────────────────────
+
+async def handle_crawl():
+    """Run the web crawler to discover pages, forms, parameters."""
+    t = get_target()
+    if not t: return
+    _apply_stealth()
+    section("WEB CRAWLER CONFIGURATION")
+    try:
+        depth = int(input(f"  {BR}{W}Max crawl depth [3]: {RS}").strip() or '3')
+    except ValueError:
+        depth = 3
+    try:
+        pages = int(input(f"  {BR}{W}Max pages to crawl [100]: {RS}").strip() or '100')
+    except ValueError:
+        pages = 100
+
+    cookies = SESSION['auth'].get('cookies') or None
+    auth_header = SESSION['auth'].get('header') or None
+
+    res = await _run_sync(crawl_target, t, SESSION['use_ssl'],
+                          max_depth=depth, max_pages=pages,
+                          cookies=cookies, auth_header=auth_header)
+    SESSION['results']['crawl'] = res
+    pause()
+
+
+def handle_auth_config():
+    """Configure authentication cookies/tokens for authenticated scanning."""
+    section("AUTHENTICATED SCANNING CONFIGURATION")
+    auth = SESSION['auth']
+
+    info("Configure auth to scan behind login walls.")
+    info("All subsequent scans (crawler, vuln scan, etc.) will use these credentials.\n")
+
+    # Show current state
+    if auth.get('cookies'):
+        ok(f"Current cookies: {len(auth['cookies'])} configured")
+        for name in auth['cookies']:
+            print(f"    {G}•{RS} {name}")
+    if auth.get('header'):
+        ok(f"Auth header: {auth['header'][:30]}...")
+    print()
+
+    print(f"  {BR}{C}[1]{RS} Set cookies manually (name=value pairs)")
+    print(f"  {BR}{C}[2]{RS} Set Authorization header (Bearer token, Basic auth)")
+    print(f"  {BR}{C}[3]{RS} Import cookies from browser (paste JSON)")
+    print(f"  {BR}{C}[4]{RS} Clear all auth")
+    print(f"  {BR}{Y}[Enter]{RS} Keep current\n")
+
+    choice = input(f"  {BR}{M}[>]{RS} {BR}{W}Choice: {RS}").strip()
+
+    if choice == '1':
+        info("Enter cookies one per line as name=value. Empty line to finish.")
+        cookies = {}
+        while True:
+            line = input(f"  {G}cookie>{RS} ").strip()
+            if not line:
+                break
+            if '=' in line:
+                name, val = line.split('=', 1)
+                cookies[name.strip()] = val.strip()
+        auth['cookies'] = cookies
+        ok(f"{len(cookies)} cookie(s) configured.")
+
+    elif choice == '2':
+        header = input(f"  {BR}{W}Authorization header value (e.g. 'Bearer eyJ...'): {RS}").strip()
+        if header:
+            auth['header'] = header
+            ok("Authorization header configured.")
+
+    elif choice == '3':
+        info("Paste a JSON object of cookies ({\"name\": \"value\", ...}):")
+        raw = input(f"  {G}json>{RS} ").strip()
+        try:
+            import json as _json
+            cookies = _json.loads(raw)
+            if isinstance(cookies, dict):
+                auth['cookies'] = cookies
+                ok(f"{len(cookies)} cookie(s) imported.")
+            else:
+                warn("Expected a JSON object, not a list.")
+        except Exception as e:
+            alert(f"Invalid JSON: {e}")
+
+    elif choice == '4':
+        auth['cookies'] = {}
+        auth['header'] = None
+        ok("Auth cleared.")
+
+    pause()
+
+
 
 def _probe_waf(target: str) -> list:
     """
@@ -725,6 +834,8 @@ async def handle_auto_scan():
     if not prompt_yes(T("q_proceed")):
         return
 
+    interactive_steps = prompt_yes("Ask for confirmation before each step? (Allows skipping/quitting)")
+
     _apply_stealth()
     start = time.time()
     SESSION['start_time'] = start
@@ -759,12 +870,16 @@ async def handle_auto_scan():
     # Web steps use mutate=True whenever WAF is detected (even if user didn't set it)
     effective_mutate = mutate or bool(wafs_found)
 
+    cookies = SESSION['auth'].get('cookies') or None
+    auth_header = SESSION['auth'].get('header') or None
+
     steps = [
         ("DNS Lookup",         _run_sync, (dns_lookup, t)),
         ("WHOIS Intelligence", _run_sync, (whois_lookup, t)),
         ("GeoIP Location",     _run_sync, (geoip_lookup, t)),
         ("Port Scan (Common)", _run_sync, (port_scan_common, t, timing, try_nmap)),
         ("SSL Certificate",    _run_sync, (ssl_inspect, t, 443)),
+        ("Web Crawl",          _run_sync, (crawl_target, t, SESSION['use_ssl'], 3, 50, cookies, auth_header)),
         ("Web Vuln Scan",      _run_sync, (web_vuln_scan, t, SESSION['use_ssl'], effective_mutate, workers)),
         ("HTTP Header Audit",  _run_sync, (http_header_audit, t, SESSION['use_ssl'])),
     ]
@@ -798,13 +913,19 @@ async def handle_auto_scan():
     for idx, step in enumerate(steps):
         steps[idx] = (f"{idx+1}/{len(steps)+1}  {step[0]}", step[1], step[2])
 
-    # We can't add CVE Mapping natively above because it needs ports_data which we don't have yet.
-    # We will run it after all steps complete.
-
     all_results = {}
     for step in steps:
         label, fn, args = step[0], step[1], step[2]
         print(f"\n  {BR}{C}┌── {label} {DM}{'─' * (45 - len(label))} ─►{RS}")
+
+        if interactive_steps:
+            choice = input(f"  {BR}{M}[?]{RS} {BR}{W}Run this step? [Enter=Run, s=Skip, q=Quit]: {RS}").strip().lower()
+            if choice == 'q':
+                warn("Aborting remaining auto-scan steps.")
+                break
+            elif choice == 's':
+                info(f"Skipping {label}...")
+                continue
 
         # WAF evasion: show active status on each step
         if evasion_on:
@@ -851,23 +972,39 @@ async def handle_auto_scan():
     # ── Auto CVE Mapping Step (runs after all others to use ports data) ────────
     cve_label = f"{len(steps)+1}/{len(steps)+1}  CVE Auto-Mapping"
     print(f"\n  {BR}{C}┌── {cve_label} {DM}{'─' * (45 - len(cve_label))} ─►{RS}")
-    ports_data = []
-    for k in all_results:
-        if 'Port Scan' in k:
-            ports_data = all_results[k]
-            break
-            
-    try:
-        cve_res = await _run_sync(auto_cve_mapping, t, SESSION['use_ssl'], ports_data)
-        all_results[cve_label] = cve_res
-    except Exception as e:
-        alert(f"{T('auto_step_fail')} {e}")
+    run_cve = True
+    if interactive_steps:
+        choice = input(f"  {BR}{M}[?]{RS} {BR}{W}Run this step? [Enter=Run, s=Skip, q=Quit]: {RS}").strip().lower()
+        if choice in ('q', 's'):
+            info(f"Skipping {cve_label}...")
+            run_cve = False
+
+    if run_cve:
+        ports_data = []
+        for k in all_results:
+            if 'Port Scan' in k:
+                ports_data = all_results[k]
+                break
+                
+        try:
+            cve_res = await _run_sync(auto_cve_mapping, t, SESSION['use_ssl'], ports_data)
+            all_results[cve_label] = cve_res
+        except Exception as e:
+            alert(f"{T('auto_step_fail')} {e}")
 
     SESSION['results']['auto_scan'] = all_results
 
     elapsed = time.time() - start
     _print_auto_summary(t, all_results, elapsed, wafs_found, cf_bypassed)
     pause()
+
+
+def _find_result(results: dict, keyword: str):
+    """Find a result by keyword in the label — fixes the hardcoded step-number problem."""
+    for label, data in results.items():
+        if keyword in label:
+            return data
+    return None
 
 
 def _print_auto_summary(target, results, elapsed, wafs_found=None, cf_bypassed=False):
@@ -884,42 +1021,56 @@ def _print_auto_summary(target, results, elapsed, wafs_found=None, cf_bypassed=F
         print(f"  {BR}{G}◈{RS}  Evasion Applied : stealth timing + path mutation + adaptive backoff")
         print()
 
-    # DNS
-    dns = results.get('1/8  DNS Lookup', {})
-    if dns and dns.get('ipv4'):
+    # DNS (dynamic label match)
+    dns = _find_result(results, 'DNS Lookup')
+    if dns and isinstance(dns, dict) and dns.get('ipv4'):
         ok(f"{T('auto_ip_addrs')} {', '.join(dns['ipv4'])}")
 
-    # Ports
-    ports = results.get('4/8  Port Scan (Common)', [])
-    if ports:
+    # Ports (dynamic label match)
+    ports = _find_result(results, 'Port Scan')
+    if ports and isinstance(ports, list):
         warn(f"{T('auto_open_ports')} {', '.join(str(p) for p, _ in ports)}")
     else:
         ok(f"{T('auto_open_ports')} {T('auto_no_ports')}")
 
-    # SSL
-    ssl = results.get('5/8  SSL Certificate', {})
-    if ssl:
+    # SSL (dynamic label match)
+    ssl_data = _find_result(results, 'SSL Certificate')
+    if ssl_data:
         ok(T("auto_ssl_found"))
 
-    # Web
-    web = results.get('6/8  Web Vuln Scan', {})
-    if web:
+    # Web Crawl (dynamic label match)
+    crawl = _find_result(results, 'Web Crawl')
+    if crawl and isinstance(crawl, dict):
+        ok(f"Crawler: {crawl.get('pages_crawled', 0)} pages, {len(crawl.get('forms', []))} forms, {len(crawl.get('parameters', {}))} params")
+
+    # Web (dynamic label match)
+    web = _find_result(results, 'Web Vuln')
+    if web and isinstance(web, dict):
         exposed = web.get('exposed', [])
         if exposed:
             alert(T("auto_web_exposed", n=len(exposed)))
         else:
             ok(T("auto_web_ok"))
 
-    # Headers
-    hdr = results.get('7/8  HTTP Header Audit', {})
-    if hdr:
+    # Active Vuln
+    avuln = _find_result(results, 'Active Vuln')
+    if avuln and isinstance(avuln, dict):
+        total = avuln.get('total', 0)
+        if total > 0:
+            alert(f"Active Vuln: {total} vulnerability(ies) confirmed!")
+        else:
+            ok("Active Vuln: No vulnerabilities found.")
+
+    # Headers (dynamic label match)
+    hdr = _find_result(results, 'Header Audit')
+    if hdr and isinstance(hdr, dict):
         score = hdr.get('score', 0)
         col = G if score >= 80 else (Y if score >= 50 else R)
         print(f"  {DM}◈{RS}  {T('auto_hdr_score')} {col}{score:.0f}%{RS}")
 
-    # SSH
-    ssh = results.get('8/8  SSH Audit', {})
-    if ssh:
+    # SSH (dynamic label match)
+    ssh = _find_result(results, 'SSH Audit')
+    if ssh and isinstance(ssh, dict):
         if ssh.get('vulnerable'):
             u, p = ssh['credential']
             critical(f"{T('auto_ssh_vuln')} {u}:{p}")
@@ -927,6 +1078,15 @@ def _print_auto_summary(target, results, elapsed, wafs_found=None, cf_bypassed=F
             ok(T("auto_ssh_ok"))
         else:
             info(T("auto_ssh_closed"))
+
+    # CVE Mapping
+    cve = _find_result(results, 'CVE')
+    if cve and isinstance(cve, dict):
+        vuln_count = sum(len(v.get('cves', [])) for v in cve.values() if isinstance(v, dict))
+        if vuln_count:
+            alert(f"CVE Mapping: {vuln_count} known CVE(s) matched!")
+        else:
+            ok("CVE Mapping: No known CVEs matched.")
 
     print()
 
@@ -1407,6 +1567,9 @@ HANDLERS = {
     '39': handle_ssl_deep,
     '40': handle_osint,
     '41': handle_service_brute,
+    # ── v3.0 Crawler & Auth ───────────────────────────────────────────────────
+    '42': handle_crawl,
+    '43': handle_auth_config,
     # Navigation
     't':  set_target,
     'T':  set_target,
