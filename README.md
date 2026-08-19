@@ -29,7 +29,7 @@ Linux is the most recommended environment for running CSCAN smoothly.
 
 **Step 1:** Open your terminal and clone the repository:
 ```bash
-git clone https://github.com/your-repo/cscaner.git
+git clone https://github.com/charlietech255/cscaner.git
 cd cscaner
 ```
 
@@ -68,7 +68,7 @@ pkg install python git rust binutils -y
 
 **Step 3:** Clone the project and enter the folder:
 ```bash
-git clone https://github.com/your-repo/cscaner.git
+git clone https://github.com/charlietech255/cscaner.git
 cd cscaner
 ```
 
@@ -94,7 +94,7 @@ You can run CSCAN on Windows using Python, or preferably using Windows Subsystem
 1. Download and install Python from the [official website](https://www.python.org/downloads/). Kindly make sure to check the box that says **"Add Python to PATH"** during installation.
 2. Open your Command Prompt (CMD) or PowerShell and clone the repository:
    ```cmd
-   git clone https://github.com/your-repo/cscaner.git
+   git clone https://github.com/charlietech255/cscaner.git
    cd cscaner
    ```
 3. Install the requirements:
