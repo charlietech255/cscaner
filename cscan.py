@@ -12,7 +12,18 @@ import os
 import sys
 import argparse
 import asyncio
+import inspect
 import functools
+
+VERSION = "0.9.0"
+SUPPORTED_MODULES = {
+    "dns": "DNS and host intelligence",
+    "web": "Web vulnerability checks and header review",
+    "crawl": "Crawler-based endpoint discovery",
+    "ssl": "TLS and certificate inspection",
+    "ports": "Common-port and full-port discovery",
+    "auto": "Default end-to-end scan pipeline"
+}
 
 async def _run_sync(func, *args, **kwargs):
     loop = asyncio.get_running_loop()
@@ -97,6 +108,10 @@ from modules.service_brute import service_brute_suite
 from modules.crawler      import crawl_target
 from modules.crawler      import set_stealth_session as crawler_set_stealth
 from modules.crawler      import set_insecure_ssl as crawler_set_insecure_ssl
+# ── v3.1 — Path/API Enumerator ───────────────────────────────────────────────
+from modules.path_api_enum import enumerate_api
+from modules.path_api_enum import set_stealth_session as apienum_set_stealth
+from modules.path_api_enum import set_insecure_ssl as apienum_set_insecure_ssl
 
 # ── Session state ─────────────────────────────────────────────────────────────
 SESSION = {
@@ -194,10 +209,12 @@ def set_target():
     if not t:
         return
     SESSION['target'] = t
+    # Auto-detect SSL from URL prefix
     SESSION['use_ssl'] = t.startswith('https://')
     ok(f"{T('target_set')} {BR}{G}{t}{RS}")
 
-    if prompt_yes(T("q_use_ssl")):
+    if not SESSION['use_ssl'] and not t.startswith('http://'):
+        # No explicit protocol — default to HTTPS
         SESSION['use_ssl'] = True
         ok(T("ssl_enabled"))
 
@@ -210,18 +227,6 @@ def set_target():
         ip = socket.gethostbyname(hostname)
         SESSION['ip'] = ip
         info(f"{T('resolved_ip')} {BR}{G}{ip}{RS}")
-        
-        try:
-            ip_obj = ipaddress.ip_address(ip)
-            if ip_obj.is_private or ip_obj.is_loopback:
-                warn(f"Warning: The target resolves to an internal/private IP ({ip}).")
-                if not prompt_yes("Are you sure you want to scan this internal IP?"):
-                    SESSION['target'] = None
-                    SESSION['ip'] = None
-                    return
-        except ValueError:
-            pass
-
     except Exception:
         warn(T("no_resolve_warn"))
 
@@ -234,6 +239,8 @@ def _apply_stealth():
 
     # FIX #6: push custom scan timeout to scanner module
     set_scan_timeout(cfg.get('scan_timeout'))  # None clears override
+
+    apienum_set_insecure_ssl(insecure_ssl)
 
     if cfg['enabled']:
         sess = StealthSession(
@@ -249,12 +256,14 @@ def _apply_stealth():
         recon_set_stealth(sess)
         exploit_set_stealth(sess)
         activevuln_set_stealth(sess)
+        apienum_set_stealth(sess)
     else:
         web_set_stealth(None)
         recon_set_stealth(None)
         exploit_set_stealth(None)
         activevuln_set_stealth(None)
         crawler_set_stealth(None)
+        apienum_set_stealth(None)
 
 
 def show_status():
@@ -298,17 +307,12 @@ async def handle_subdomain():
     t = get_target()
     if not t: return
     section(T("subdomain_title"))
-    if prompt_yes(T("q_custom_wordlist")):
-        path = input(f"  {BR}{W}{T('wordlist_path')}: {RS}").strip()
-        try:
-            with open(path) as f:
-                wl = [line.strip() for line in f if line.strip()]
-            info(T("wordlist_loaded", n=len(wl)))
-        except Exception as e:
-            warn(T("wordlist_err", e=e))
-            wl = None
-    else:
-        wl = None
+    wl = None
+    bundled = os.path.join(os.path.dirname(__file__), 'wordlists', 'subdomains.txt')
+    if os.path.isfile(bundled):
+        with open(bundled) as f:
+            wl = [line.strip() for line in f if line.strip()]
+        info(T("wordlist_loaded", n=len(wl)))
     timing = SESSION['stealth']['timing'] if SESSION['stealth']['enabled'] else 'normal'
     workers = TIMING_PROFILES.get(timing, {}).get('workers', 30)
     res = await _run_sync(subdomain_enum, t, wl, workers=workers)
@@ -351,13 +355,7 @@ async def handle_port_full():
     if not t: return
     _apply_stealth()
     section(T("port_full_title"))
-    info(T("port_full_info"))
-    try:
-        start = int(input(f"  {BR}{W}{T('port_start')}: {RS}").strip() or '1')
-        end   = int(input(f"  {BR}{W}{T('port_end')}: {RS}").strip() or '65535')
-    except ValueError:
-        start, end = 1, 65535
-    warn(T("port_scanning_warn", n=end - start + 1))
+    start, end = 1, 65535
     timing = SESSION['stealth']['timing']
     try_nmap = SESSION['stealth']['try_nmap']
     res = await _run_sync(port_scan_full, t, start, end, timing=timing, try_nmap=try_nmap)
@@ -368,14 +366,11 @@ async def handle_banner_grab():
     t = get_target()
     if not t: return
     section(T("banner_title"))
-    info(T("banner_info"))
-    raw = input(f"  {BR}{W}{T('banner_prompt')}: {RS}").strip()
+    # Use ports from previous scan if available, otherwise scan common ports
     ports = None
-    if raw:
-        try:
-            ports = [int(p.strip()) for p in raw.split(',')]
-        except ValueError:
-            warn(T("banner_invalid"))
+    prev_ports = SESSION['results'].get('ports_common', [])
+    if prev_ports:
+        ports = [p['port'] for p in prev_ports if isinstance(p, dict) and 'port' in p]
     res = await _run_sync(banner_grabber, t, ports)
     SESSION['results']['banners'] = res
     pause()
@@ -383,8 +378,7 @@ async def handle_banner_grab():
 async def handle_ssl():
     t = get_target()
     if not t: return
-    raw = input(f"  {BR}{W}{T('ssl_port_prompt')}: {RS}").strip()
-    port = int(raw) if raw.isdigit() else 443
+    port = 443
     res = await _run_sync(ssl_inspect, t, port)
     SESSION['results']['ssl'] = res
     pause()
@@ -412,17 +406,12 @@ async def handle_dir_brute():
     if not t: return
     _apply_stealth()
     section(T("dir_brute_title"))
-    if prompt_yes(T("q_custom_dir_wl")):
-        path = input(f"  {BR}{W}{T('wordlist_path')}: {RS}").strip()
-        try:
-            with open(path) as f:
-                wl = [l.strip() for l in f if l.strip()]
-            info(T("wordlist_loaded", n=len(wl)))
-        except Exception as e:
-            warn(T("wordlist_err", e=e))
-            wl = None
-    else:
-        wl = None
+    wl = None
+    bundled = os.path.join(os.path.dirname(__file__), 'wordlists', 'dir_bruteforce.txt')
+    if os.path.isfile(bundled):
+        with open(bundled) as f:
+            wl = [l.strip() for l in f if l.strip()]
+        info(T("wordlist_loaded", n=len(wl)))
     mutate = SESSION['stealth']['mutate_paths']
     timing = SESSION['stealth']['timing'] if SESSION['stealth']['enabled'] else 'normal'
     workers = TIMING_PROFILES.get(timing, {}).get('workers', 20)
@@ -448,18 +437,18 @@ async def handle_ssh():
     if not t: return
     _apply_stealth()
     section(T("ssh_title"))
-    raw_port = input(f"  {BR}{W}{T('ssh_port_prompt')}: {RS}").strip()
-    port = int(raw_port) if raw_port.isdigit() else 22
+    port = 22
 
+    # Auto-load SSH creds wordlist
     creds = None
-    if prompt_yes(T("q_custom_creds")):
-        path  = input(f"  {BR}{W}{T('creds_file_prompt')}: {RS}").strip()
+    creds_file = os.path.join(os.path.dirname(__file__), 'wordlists', 'ssh_creds.txt')
+    if os.path.isfile(creds_file):
         try:
-            with open(path) as f:
+            with open(creds_file) as f:
                 creds = [tuple(l.strip().split(':', 1)) for l in f if ':' in l]
             info(T("creds_loaded", n=len(creds)))
-        except Exception as e:
-            warn(T("creds_load_err", e=e))
+        except Exception:
+            pass
 
     delay = 0.0
     if SESSION['stealth']['enabled']:
@@ -471,8 +460,7 @@ async def handle_ssh():
 async def handle_ftp():
     t = get_target()
     if not t: return
-    raw_port = input(f"  {BR}{W}{T('ftp_port_prompt')}: {RS}").strip()
-    port = int(raw_port) if raw_port.isdigit() else 21
+    port = 21
     res = await _run_sync(ftp_anon_check, t, port)
     SESSION['results']['ftp'] = res
     pause()
@@ -482,7 +470,7 @@ async def handle_http_auth():
     if not t: return
     _apply_stealth()
     section(T("http_auth_title"))
-    path = input(f"  {BR}{W}{T('http_auth_path')}: {RS}").strip() or '/'
+    path = '/'
     res  = await _run_sync(http_auth_brute, t, path)
     SESSION['results']['http_auth'] = res
     pause()
@@ -499,10 +487,9 @@ async def handle_active_vuln():
     crawl_data = SESSION['results'].get('crawl', None)
     cookies = SESSION['auth'].get('cookies') or None
     if not crawl_data:
-        warn("No crawl data found. Run the Web Crawler first for best results.")
-        if prompt_yes("Run the Web Crawler now before scanning?"):
-            await handle_crawl()
-            crawl_data = SESSION['results'].get('crawl', None)
+        warn("No crawl data found. Running Web Crawler first for best results...")
+        await handle_crawl()
+        crawl_data = SESSION['results'].get('crawl', None)
     res = await _run_sync(active_vuln_scan, t, SESSION['use_ssl'],
                           crawl_data=crawl_data, cookies=cookies)
     SESSION['results']['active_vuln'] = res
@@ -543,8 +530,7 @@ async def handle_nvd_manual():
 async def handle_udp_scan():
     t = get_target()
     if not t: return
-    domain_raw = input(f"  {BR}{W}Domain for zone transfer (Enter to auto-detect): {RS}").strip() or None
-    res = await _run_sync(udp_scan_suite, t, domain_raw)
+    res = await _run_sync(udp_scan_suite, t, None)
     SESSION['results']['udp_scan'] = res
     pause()
 
@@ -552,8 +538,7 @@ async def handle_udp_scan():
 async def handle_ssl_deep():
     t = get_target()
     if not t: return
-    raw = input(f"  {BR}{W}Port [443]: {RS}").strip()
-    port = int(raw) if raw.isdigit() else 443
+    port = 443
     res = await _run_sync(ssl_deep_audit, t, port)
     SESSION['results']['ssl_deep'] = res
     pause()
@@ -588,16 +573,9 @@ async def handle_crawl():
     t = get_target()
     if not t: return
     _apply_stealth()
-    section("WEB CRAWLER CONFIGURATION")
-    try:
-        depth = int(input(f"  {BR}{W}Max crawl depth [3]: {RS}").strip() or '3')
-    except ValueError:
-        depth = 3
-    try:
-        pages = int(input(f"  {BR}{W}Max pages to crawl [100]: {RS}").strip() or '100')
-    except ValueError:
-        pages = 100
 
+    depth = 3
+    pages = 100
     cookies = SESSION['auth'].get('cookies') or None
     auth_header = SESSION['auth'].get('header') or None
 
@@ -673,6 +651,31 @@ def handle_auth_config():
 
     pause()
 
+
+# ── v3.1 — Path/API Enumerator Handler ───────────────────────────────────────
+async def handle_api_enum():
+    """Handler for Path/API Endpoint Enumerator."""
+    t = get_target()
+    if not t:
+        return
+    _apply_stealth()
+
+    # Auto-load the extended wordlist if available, otherwise use built-in defaults
+    wl = None
+    bundled = os.path.join(os.path.dirname(__file__), 'wordlists', 'api_paths.txt')
+    if os.path.isfile(bundled):
+        with open(bundled) as f:
+            wl = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        info(f"Loaded {len(wl)} paths from api_paths.txt.")
+
+    timing = SESSION['stealth']['timing'] if SESSION['stealth']['enabled'] else 'normal'
+    from modules.stealth import TIMING_PROFILES
+    workers = TIMING_PROFILES.get(timing, {}).get('workers', 15)
+
+    res = await _run_sync(enumerate_api, t, SESSION['use_ssl'],
+                          wordlist=wl, workers=workers, probe_methods=True)
+    SESSION['results']['api_enum'] = res
+    pause()
 
 
 def _probe_waf(target: str) -> list:
@@ -829,13 +832,6 @@ async def handle_auto_scan():
     t = get_target(force=True)
     if not t: return
 
-    bold(T("auto_warn"))
-    warn(T("auto_time_est"))
-    if not prompt_yes(T("q_proceed")):
-        return
-
-    interactive_steps = prompt_yes("Ask for confirmation before each step? (Allows skipping/quitting)")
-
     _apply_stealth()
     start = time.time()
     SESSION['start_time'] = start
@@ -888,7 +884,6 @@ async def handle_auto_scan():
         steps.append(("SSH Audit", _run_sync, (ssh_audit, t, 22, None, ssh_delay)))
 
     # ── Advanced SPA / JS Scanning ─────────────────────────────────────────────
-    # This fulfills the "Architectural: No JavaScript / SPA support" requirement
     if _CAMOUFOX_AVAILABLE:
         from modules.browser_engine import _build_cfg, browser_js_render, browser_scan_js_secrets
         
@@ -918,15 +913,6 @@ async def handle_auto_scan():
         label, fn, args = step[0], step[1], step[2]
         print(f"\n  {BR}{C}┌── {label} {DM}{'─' * (45 - len(label))} ─►{RS}")
 
-        if interactive_steps:
-            choice = input(f"  {BR}{M}[?]{RS} {BR}{W}Run this step? [Enter=Run, s=Skip, q=Quit]: {RS}").strip().lower()
-            if choice == 'q':
-                warn("Aborting remaining auto-scan steps.")
-                break
-            elif choice == 's':
-                info(f"Skipping {label}...")
-                continue
-
         # WAF evasion: show active status on each step
         if evasion_on:
             evade_tags = []
@@ -940,7 +926,6 @@ async def handle_auto_scan():
             all_results[label] = r
 
             # ── WAF block recovery: if web step got no results, retry once
-            #    with a fresh set of mutated paths and longer jitter
             if wafs_found and r is not None and 'Web Vuln Scan' in label:
                 exposed = r.get('exposed', []) if isinstance(r, dict) else []
                 if not exposed:
@@ -948,10 +933,9 @@ async def handle_auto_scan():
                     import time as _t; _t.sleep(random.uniform(2.0, 5.0))
                     r2 = await _run_sync(
                         web_vuln_scan, t, SESSION['use_ssl'],
-                        True,          # force mutate=True
-                        max(5, workers // 2),  # even fewer threads on retry
+                        True,
+                        max(5, workers // 2),
                     )
-                    # Merge retry findings into original
                     if isinstance(r2, dict) and r2.get('exposed'):
                         for k in ('exposed', 'forbidden', 'auth_required'):
                             r[k].extend(r2.get(k, []))
@@ -963,7 +947,6 @@ async def handle_auto_scan():
 
         except Exception as e:
             alert(f"{T('auto_step_fail')} {e}")
-            # On WAF-related block signals, back off before continuing
             if wafs_found and any(code in str(e) for code in ('403', '429', '503')):
                 backoff = random.uniform(5.0, 12.0)
                 warn(f"WAF block signal detected — backing off for {backoff:.1f}s before next step.")
@@ -972,25 +955,18 @@ async def handle_auto_scan():
     # ── Auto CVE Mapping Step (runs after all others to use ports data) ────────
     cve_label = f"{len(steps)+1}/{len(steps)+1}  CVE Auto-Mapping"
     print(f"\n  {BR}{C}┌── {cve_label} {DM}{'─' * (45 - len(cve_label))} ─►{RS}")
-    run_cve = True
-    if interactive_steps:
-        choice = input(f"  {BR}{M}[?]{RS} {BR}{W}Run this step? [Enter=Run, s=Skip, q=Quit]: {RS}").strip().lower()
-        if choice in ('q', 's'):
-            info(f"Skipping {cve_label}...")
-            run_cve = False
 
-    if run_cve:
-        ports_data = []
-        for k in all_results:
-            if 'Port Scan' in k:
-                ports_data = all_results[k]
-                break
-                
-        try:
-            cve_res = await _run_sync(auto_cve_mapping, t, SESSION['use_ssl'], ports_data)
-            all_results[cve_label] = cve_res
-        except Exception as e:
-            alert(f"{T('auto_step_fail')} {e}")
+    ports_data = []
+    for k in all_results:
+        if 'Port Scan' in k:
+            ports_data = all_results[k]
+            break
+            
+    try:
+        cve_res = await _run_sync(auto_cve_mapping, t, SESSION['use_ssl'], ports_data)
+        all_results[cve_label] = cve_res
+    except Exception as e:
+        alert(f"{T('auto_step_fail')} {e}")
 
     SESSION['results']['auto_scan'] = all_results
 
@@ -1570,6 +1546,8 @@ HANDLERS = {
     # ── v3.0 Crawler & Auth ───────────────────────────────────────────────────
     '42': handle_crawl,
     '43': handle_auth_config,
+    # ── v3.1 — Path/API Enumerator ───────────────────────────────────────────
+    '44': handle_api_enum,
     # Navigation
     't':  set_target,
     'T':  set_target,
@@ -1627,8 +1605,8 @@ async def interactive_mode():
             show_banner()
             show_status()
             try:
-                # FIX #8: Use asyncio.iscoroutinefunction only — no fragile name list
-                if asyncio.iscoroutinefunction(handler):
+                # FIX #8: Use inspect.iscoroutinefunction (asyncio's version is deprecated since 3.12)
+                if inspect.iscoroutinefunction(handler):
                     await handler()
                 else:
                     handler()
@@ -1637,26 +1615,59 @@ async def interactive_mode():
         else:
             time.sleep(1)
 
+def build_parser():
+    parser = argparse.ArgumentParser(
+        description=(
+            "CSCAN is an authorized web reconnaissance and assessment toolkit. "
+            "It is intended for owned or explicitly authorized targets and focuses on "
+            "targeted discovery, inspection, and structured reporting."
+        )
+    )
+    parser.add_argument("-v", "--version", action="version", version=f"CSCAN {VERSION}")
+    parser.add_argument("-t", "--target", help="Target URL or IP to scan")
+    parser.add_argument(
+        "-m", "--module",
+        choices=sorted(SUPPORTED_MODULES),
+        help="Workflow to run: " + ", ".join(f"{k} ({v})" for k, v in SUPPORTED_MODULES.items())
+    )
+    parser.add_argument("--stealth", action="store_true", help="Enable stealth / evasion settings")
+    parser.add_argument("--insecure", action="store_true", help="Allow insecure SSL certificates")
+    parser.add_argument("--list-modules", action="store_true", help="List supported non-interactive modules")
+    return parser
+
+
 async def main():
-    parser = argparse.ArgumentParser(description="CSCAN")
-    parser.add_argument("-t", "--target", help="Target URL or IP")
-    parser.add_argument("-m", "--module", help="Module (web, dns, ssh, auto)")
-    parser.add_argument("--stealth", action="store_true", help="Enable stealth")
-    parser.add_argument("--insecure", action="store_true", help="Allow insecure SSL")
+    parser = build_parser()
     args = parser.parse_args()
+
+    if args.list_modules:
+        print("Supported modules:")
+        for name, description in SUPPORTED_MODULES.items():
+            print(f"  - {name}: {description}")
+        return
 
     if args.target:
         SESSION['target'] = args.target
         SESSION['use_ssl'] = args.target.startswith('https://')
-        if args.stealth: SESSION['stealth']['enabled'] = True
-        if args.insecure: SESSION['stealth']['insecure_ssl'] = True
-        
+        if args.stealth:
+            SESSION['stealth']['enabled'] = True
+        if args.insecure:
+            SESSION['stealth']['insecure_ssl'] = True
+
         _apply_stealth()
-        mod = args.module
-        if mod == 'web': await handle_web_vuln()
-        elif mod == 'dns': await handle_dns()
-        elif mod == 'ssh': await handle_ssh()
-        else: await handle_auto_scan()
+        mod = args.module or "auto"
+        if mod == "web":
+            await handle_web_vuln()
+        elif mod == "dns":
+            await handle_dns()
+        elif mod == "crawl":
+            await handle_crawl()
+        elif mod == "ssl":
+            await handle_ssl()
+        elif mod == "ports":
+            await handle_port_common()
+        else:
+            await handle_auto_scan()
     else:
         await interactive_mode()
 

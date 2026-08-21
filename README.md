@@ -1,25 +1,43 @@
-# CSCAN Security Framework (v3.0)
+# CSCAN Security Assessment Toolkit
 
-**Karibu sana!** Welcome to CSCAN. 
+CSCAN is a focused toolkit for authorized web reconnaissance and assessment. It is designed for owned or explicitly authorized targets and emphasizes structured discovery, inspection, and reporting rather than broad marketing claims.
 
-CSCAN is a professional, all-in-one security testing framework designed to make your reconnaissance and vulnerability scanning work easier and more effective. Whether you are a security researcher, a system administrator, or an ethical hacker, CSCAN provides you with the right tools to identify weaknesses in your systems before the bad actors do. 
+This project is best understood as a practical lab and assessment helper for:
 
-We have designed CSCAN to be powerful but very simple to use. It handles everything from finding subdomains and gathering open-source intelligence (OSINT) to crawling websites and testing for vulnerabilities like XSS and SQL Injection.
+- DNS and host discovery
+- subdomain enumeration
+- common port and service review
+- TLS inspection
+- web crawling and endpoint discovery
+- authenticated or session-aware testing
+- structured findings and report export
 
----
-
-## 🌟 Key Features
-
-*   **Deep Web Crawler:** Discovers hidden pages, forms, and parameters automatically.
-*   **Active Vulnerability Scanner:** Tests for XSS, SQLi, SSRF, and Command Injection using real data found by the crawler.
-*   **Live CVE Mapping:** Checks your server software against the live NIST National Vulnerability Database to see if there are any known bugs.
-*   **Passive OSINT Reconnaissance:** Gathers intelligence from free sources (like AlienVault, URLScan, and ThreatCrowd) without ever touching the target directly.
-*   **Authenticated Scanning:** Allows you to put your session cookies so you can scan pages that require a login.
-*   **Stealth & WAF Evasion:** Built-in techniques to safely bypass basic Web Application Firewalls (WAF) like Cloudflare.
+It is not positioned as a universal enterprise-grade security platform. The intent is to provide a transparent, scriptable workflow for web-target assessment in controlled environments.
 
 ---
 
-## ⚙️ Installation Guide
+## Scope and maturity
+
+This project is intentionally scoped to a set of practical assessment tasks. Some capabilities are experimental or best-effort, and some are intentionally limited to specific workflows.
+
+This repository is most useful when used responsibly and with clear authorization. The tool should be treated as a research and assessment aid, not as a guarantee of production-grade coverage.
+
+---
+
+## Core features
+
+* DNS and host intelligence for target validation
+* Subdomain enumeration and passive-style discovery support
+* Port scanning and service inspection
+* TLS / certificate inspection
+* Web crawling for page and parameter discovery
+* Header and endpoint review for common web issues
+* Auth-aware scanning support
+* Structured reporting in JSON and text formats
+
+---
+
+## Installation Guide
 
 Kindly follow the steps below depending on the system you are using. It is very simple to set up.
 
@@ -112,21 +130,36 @@ If you have WSL installed (Ubuntu on Windows), simply open your WSL terminal and
 
 ---
 
-## 🚀 How to Use CSCAN
+## Usage
 
-Using CSCAN is very straightforward. When you run `python3 cscan.py`, you will be greeted by a beautiful, interactive menu.
+CSCAN can be used in two modes:
 
-**Step-by-step Usage:**
-1. **Set your target:** Press `T` on your keyboard and enter the website or IP address you want to scan (for example: `example.com`).
-2. **Run OSINT (Menu 40):** We advise you to start with passive reconnaissance. This will gather information from public databases without alerting the target.
-3. **Run the Web Crawler (Menu 42):** This is a very important step. Let CSCAN spider the website to find all hidden links, forms, and JavaScript secrets.
-4. **Configure Authentication (Menu 43):** If the website requires a login, go here to paste your session cookies.
-5. **Run Active Scan (Menu 35):** Finally, run the active vulnerability scanner. CSCAN will use the data from the crawler to test for serious bugs.
-6. **Auto Scan (Menu 17):** If you are in a hurry, you can choose the Auto Scan option, and CSCAN will run all the necessary steps automatically for you.
+1. Interactive menu-driven mode:
+   ```bash
+   python3 cscan.py
+   ```
+
+2. Direct non-interactive workflow:
+   ```bash
+   python3 cscan.py --target https://example.com --module auto
+   python3 cscan.py --target https://example.com --module dns
+   python3 cscan.py --target https://example.com --module web
+   python3 cscan.py --list-modules
+   ```
+
+This supports a more disciplined, repeatable usage pattern for assessment work. For a serious workflow, prefer the direct module execution and the exported JSON/text report output.
 
 ---
 
-## 🔄 How to Stay Updated
+## Reporting
+
+Results can be exported for later review. After a scan, use the export flow in the interactive menu or run a module and save the output in the project reports directory.
+
+The goal is explicit evidence: target, findings, observations, and context captured in a consistent format.
+
+---
+
+## Update and maintenance
 
 Security is always changing, and we frequently update CSCAN with new features and better payloads. To make sure you always have the latest version, kindly do the following:
 
