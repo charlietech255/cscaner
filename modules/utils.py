@@ -6,9 +6,34 @@ FIX #12: Single canonical resolve_host() used by scanner, exploit, and recon
 """
 import socket
 import ipaddress
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from modules.ui import alert, info, warn, BR, C, RS
+
+
+def normalize_target(target: str, default_scheme: str = 'https') -> str:
+    """Return a validated HTTP(S) target while preserving path and query."""
+    if not target or not target.strip():
+        raise ValueError("target cannot be empty")
+    value = target.strip()
+    if '://' not in value:
+        value = f'{default_scheme}://{value}'
+    parsed = urlparse(value)
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+        raise ValueError("target must be a hostname, IP, or http(s) URL")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("target contains an invalid port") from exc
+    normalized = urlunparse((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path or '/',
+        parsed.params,
+        parsed.query,
+        '',
+    ))
+    return normalized.rstrip('/') or f'{parsed.scheme}://{parsed.netloc}'
 
 
 def resolve_host(target: str) -> str:
@@ -21,6 +46,11 @@ def resolve_host(target: str) -> str:
     - Informs the user when IPv6 is found alongside IPv4.
     - Returns None and prints an alert if resolution fails.
     """
+    if not target or not target.strip():
+        alert("Target cannot be empty")
+        return None
+    target = target.strip()
+
     # Strip protocol and path to get the raw hostname
     if '://' in target:
         hostname = urlparse(target).hostname or target
@@ -28,6 +58,8 @@ def resolve_host(target: str) -> str:
         hostname = target.split('/')[0]
     else:
         hostname = target
+
+    hostname = hostname.strip('[]')
 
     # Already a bare IP address? Return as-is (handles IPv6 literals too)
     try:

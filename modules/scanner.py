@@ -8,7 +8,7 @@ import socket
 import ssl
 import time
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from modules.ui import (
@@ -64,6 +64,19 @@ RISKY_PORTS = {23, 135, 139, 445, 1723, 3389, 5900, 6379, 9200, 27017}
 TIMEOUT = 1.5
 
 
+def _validate_port_range(start: int, end: int) -> tuple[int, int]:
+    """Validate a TCP port range before resolving or scanning a target."""
+    if isinstance(start, bool) or isinstance(end, bool):
+        raise ValueError("port range values must be integers")
+    if not isinstance(start, int) or not isinstance(end, int):
+        raise ValueError("port range values must be integers")
+    if not 1 <= start <= 65535 or not 1 <= end <= 65535:
+        raise ValueError("ports must be between 1 and 65535")
+    if start > end:
+        raise ValueError("start port must not exceed end port")
+    return start, end
+
+
 # ── Core scan ─────────────────────────────────────────────────────────────────
 def _probe_port(ip: str, port: int, timeout: float = TIMEOUT, delay: float = 0.0) -> tuple:
     """Try TCP connect with optional delay. Returns (port, is_open, banner)."""
@@ -78,6 +91,8 @@ def _probe_port(ip: str, port: int, timeout: float = TIMEOUT, delay: float = 0.0
 def _display_port(port, banner, service):
     risk = f"  {BR}{R}◄ RISKY!{RS}" if port in RISKY_PORTS else ''
     b_str = (banner[:48] + '…') if len(banner) > 48 else banner
+    if banner == "" or banner == "unknown":
+         risk += f"  {BR}{Y}(Unverified - TCP connection only){RS}"
     print(f"  {BR}{G}[OPEN]{RS}  {BR}{W}{port:<6}{RS}  {C}{service:<14}{RS}  {DM}{b_str}{RS}{risk}")
 
 
@@ -138,6 +153,7 @@ def port_scan_common(target: str, timing: str = 'normal', try_nmap: bool = False
 # ── Full port scan ────────────────────────────────────────────────────────────
 def port_scan_full(target: str, start: int = 1, end: int = 65535, timing: str = 'normal', try_nmap: bool = False) -> list:
     from modules.stealth import TIMING_PROFILES, try_nmap_scan
+    start, end = _validate_port_range(start, end)
     section(f"PORT SCANNER — FULL RANGE ({start}–{end})")
     ip = _resolve(target)
     if not ip:
@@ -249,7 +265,7 @@ def ssl_inspect(target: str, port: int = 443) -> dict:
         exp_raw = cert.get('notAfter', '')
         try:
             exp_dt  = datetime.strptime(exp_raw, '%b %d %H:%M:%S %Y %Z')
-            days    = (exp_dt - datetime.utcnow()).days
+            days    = (exp_dt - datetime.now(timezone.utc).replace(tzinfo=None)).days
             exp_col = G if days > 30 else (Y if days > 0 else R)
         except Exception:
             days, exp_col = '?', W

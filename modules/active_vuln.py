@@ -30,6 +30,7 @@ WORDLISTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'wordli
 
 _stealth_session = None
 _insecure_ssl    = False
+_auth_header     = None
 TIMEOUT          = 8
 
 
@@ -43,12 +44,19 @@ def set_insecure_ssl(flag: bool):
     _insecure_ssl = flag
 
 
+def set_auth_header(header: str | None):
+    global _auth_header
+    _auth_header = header.strip() if header else None
+
+
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 def _get(url, params=None, timeout=TIMEOUT, allow_redirects=True, cookies=None):
     try:
         kw = {'params': params, 'timeout': timeout, 'allow_redirects': allow_redirects}
         if cookies:
             kw['cookies'] = cookies
+        if _auth_header:
+            kw['headers'] = {'Authorization': _auth_header}
         if _stealth_session:
             return _stealth_session.get(url, **kw)
         return requests.get(url, verify=not _insecure_ssl,
@@ -63,6 +71,8 @@ def _post(url, data=None, timeout=TIMEOUT, cookies=None):
         kw = {'data': data, 'timeout': timeout}
         if cookies:
             kw['cookies'] = cookies
+        if _auth_header:
+            kw['headers'] = {'Authorization': _auth_header}
         if _stealth_session:
             return _stealth_session.post(url, **kw)
         return requests.post(url, verify=not _insecure_ssl,
@@ -76,6 +86,23 @@ def _build_url(target: str) -> str:
     if target.startswith(('http://', 'https://')):
         return target.rstrip('/')
     return f"http://{target.rstrip('/')}"
+
+
+def _same_origin(url: str, base_url: str) -> bool:
+    """Allow active requests only to the configured scheme, host, and port."""
+    try:
+        candidate = urllib.parse.urlparse(url)
+        base = urllib.parse.urlparse(base_url)
+        candidate_port = candidate.port or (443 if candidate.scheme == 'https' else 80)
+        base_port = base.port or (443 if base.scheme == 'https' else 80)
+        return (
+            candidate.scheme in ('http', 'https')
+            and candidate.scheme == base.scheme
+            and candidate.hostname == base.hostname
+            and candidate_port == base_port
+        )
+    except ValueError:
+        return False
 
 
 # ── Load payloads from wordlists (with fallback) ─────────────────────────────
@@ -534,6 +561,8 @@ def active_vuln_scan(target: str, use_ssl: bool = False,
         tested_urls = set()
         for param, urls in crawl_data['parameters'].items():
             for url in (urls if isinstance(urls, list) else [urls]):
+                if not _same_origin(url, base):
+                    continue
                 if url not in tested_urls:
                     tested_urls.add(url)
                     # Collect all params for this URL
@@ -551,6 +580,8 @@ def active_vuln_scan(target: str, use_ssl: bool = False,
         if js_endpoints:
             info(f"Also testing {len(js_endpoints)} JS-discovered endpoints")
             for ep in js_endpoints[:20]:
+                if not _same_origin(ep, base):
+                    continue
                 test_targets.append({'url': ep, 'params': FALLBACK_PARAMS[:10]})
     else:
         warn("No crawl data — falling back to parameter guessing (less effective)")
@@ -598,6 +629,8 @@ def active_vuln_scan(target: str, use_ssl: bool = False,
     if crawl_data:
         forms = crawl_data.get('forms', [])
         for i, form in enumerate(forms[:15]):
+            if not _same_origin(form.get('action', ''), base):
+                continue
             progress_bar(i + 1, min(len(forms), 15), 'form testing')
             try:
                 all_findings.extend(_test_xss_form(form, cookies=cookies))

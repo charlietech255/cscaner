@@ -24,6 +24,7 @@ Install:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -37,6 +38,23 @@ from modules.ui import (
     section, ok, warn, alert, info, critical, bold, divider, progress_bar,
     G, R, Y, C, M, W, BR, DM, RS, pause
 )
+
+
+# ── Safe asyncio.run() that works inside a running event loop ─────────────────
+def _run_async(coro):
+    """
+    Run an async coroutine from sync code. Works correctly even if called
+    from within an already-running event loop (e.g. from cscan.py's async main).
+    """
+    try:
+        asyncio.get_running_loop()
+        # Already in a running loop — offload to a new thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            return pool.submit(asyncio.run, coro).result()
+    except RuntimeError:
+        # No running loop — safe to call directly
+        return asyncio.run(coro)
 
 # ── Availability guard ────────────────────────────────────────────────────────
 _CAMOUFOX_OK = False
@@ -148,7 +166,7 @@ def browser_cf_bypass(cfg: BrowserConfig) -> dict | None:
     if not _need_camoufox("CF bypass"):
         return None
     try:
-        return asyncio.run(_bypass_cloudflare(cfg))
+        return _run_async(_bypass_cloudflare(cfg))
     except Exception as e:
         alert(f"CF bypass error: {e}")
         return None
@@ -247,7 +265,7 @@ def browser_js_render(cfg: BrowserConfig) -> dict:
     if not _need_camoufox("JS render"):
         return {}
     try:
-        return asyncio.run(_js_render(cfg))
+        return _run_async(_js_render(cfg))
     except Exception as e:
         alert(f"JS render error: {e}")
         return {}
@@ -265,6 +283,27 @@ _SECRET_VALUE_RE = re.compile(
     r"(?:password|passwd|secret|api[_-]?key|apikey|token|bearer)[\"'\s:=]+([A-Za-z0-9_\-\.=+/]{8,})",
     re.IGNORECASE,
 )
+
+
+def _redacted_value(value: str) -> dict:
+    """Keep enough metadata to identify a repeated secret without exposing it."""
+    text = str(value or '')
+    return {
+        'value': '[REDACTED]',
+        'length': len(text),
+        'sha256_12': hashlib.sha256(text.encode('utf-8')).hexdigest()[:12],
+    }
+
+
+def _safe_headers(headers: dict) -> dict:
+    """Redact reusable credentials while retaining non-sensitive headers."""
+    safe = {}
+    for name, value in headers.items():
+        if _SENSITIVE_HEADER_PATTERNS.search(name) or name.lower() == 'cookie':
+            safe[name] = _redacted_value(value)
+        else:
+            safe[name] = value
+    return safe
 
 
 async def _capture_network(cfg: BrowserConfig, wait_extra_ms: int = 3000) -> dict:
@@ -292,7 +331,7 @@ async def _capture_network(cfg: BrowserConfig, wait_extra_ms: int = 3000) -> dic
             entry = {
                 "url":     req.url,
                 "method":  req.method,
-                "headers": dict(req.headers),
+                "headers": _safe_headers(dict(req.headers)),
             }
             traffic["requests"].append(entry)
 
@@ -301,7 +340,8 @@ async def _capture_network(cfg: BrowserConfig, wait_extra_ms: int = 3000) -> dic
                 if _SENSITIVE_HEADER_PATTERNS.search(hname):
                     traffic["sensitive_headers"].append({
                         "direction": "request",
-                        "url": req.url, "header": hname, "value": hval[:120],
+                        "url": req.url, "header": hname,
+                        **_redacted_value(hval),
                     })
 
             # API endpoints heuristic (XHR/fetch, JSON, /api/, graphql)
@@ -318,7 +358,11 @@ async def _capture_network(cfg: BrowserConfig, wait_extra_ms: int = 3000) -> dic
                     body = req.post_data or ""
                 except Exception:
                     body = ""
-                traffic["form_posts"].append({"url": req.url, "body_preview": body[:200]})
+                traffic["form_posts"].append({
+                    "url": req.url,
+                    "body_present": bool(body),
+                    "body_length": len(body),
+                })
 
         async def handle_response(resp):
             # Sensitive response headers
@@ -326,7 +370,8 @@ async def _capture_network(cfg: BrowserConfig, wait_extra_ms: int = 3000) -> dic
                 if _SENSITIVE_HEADER_PATTERNS.search(hname):
                     traffic["sensitive_headers"].append({
                         "direction": "response",
-                        "url": resp.url, "header": hname, "value": hval[:120],
+                        "url": resp.url, "header": hname,
+                        **_redacted_value(hval),
                     })
 
         page.on("request",  handle_request)
@@ -342,12 +387,12 @@ async def _capture_network(cfg: BrowserConfig, wait_extra_ms: int = 3000) -> dic
     return traffic
 
 
-def browser_capture_network(cfg: BrowserConfig) -> dict:
+def browser_capture_network(cfg: BrowserConfig, wait_extra_ms: int = 3000) -> dict:
     """Public sync wrapper for network traffic capture."""
     if not _need_camoufox("Network capture"):
         return {}
     try:
-        return asyncio.run(_capture_network(cfg))
+        return _run_async(_capture_network(cfg, wait_extra_ms))
     except Exception as e:
         alert(f"Network capture error: {e}")
         return {}
@@ -450,7 +495,7 @@ def browser_test_login(
     if not _need_camoufox("Login test"):
         return {}
     try:
-        return asyncio.run(_test_login(cfg, username, password))
+        return _run_async(_test_login(cfg, username, password))
     except Exception as e:
         alert(f"Login test error: {e}")
         return {}
@@ -483,7 +528,7 @@ def browser_screenshot(cfg: BrowserConfig, full_page: bool = True) -> str | None
     if not _need_camoufox("Screenshot"):
         return None
     try:
-        return asyncio.run(_take_screenshot(cfg, full_page))
+        return _run_async(_take_screenshot(cfg, full_page))
     except Exception as e:
         alert(f"Screenshot error: {e}")
         return None
@@ -533,7 +578,7 @@ def browser_fingerprint_probe(cfg: BrowserConfig) -> dict:
     if not _need_camoufox("Fingerprint probe"):
         return {}
     try:
-        return asyncio.run(_probe_fingerprint(cfg))
+        return _run_async(_probe_fingerprint(cfg))
     except Exception as e:
         alert(f"Fingerprint probe error: {e}")
         return {}
@@ -552,7 +597,9 @@ async def _harvest_cookies(cfg: BrowserConfig) -> list[dict]:
         page = await browser.new_page()
         await page.goto(cfg.target, wait_until="networkidle", timeout=cfg.timeout_ms)
         await page.wait_for_timeout(2000)
-        return await page.context.cookies()
+        cookies = await page.context.cookies()
+        return [{**cookie, **_redacted_value(cookie.get('value', ''))}
+            for cookie in cookies]
 
 
 def browser_harvest_cookies(cfg: BrowserConfig) -> list[dict]:
@@ -560,7 +607,7 @@ def browser_harvest_cookies(cfg: BrowserConfig) -> list[dict]:
     if not _need_camoufox("Cookie harvest"):
         return []
     try:
-        return asyncio.run(_harvest_cookies(cfg))
+        return _run_async(_harvest_cookies(cfg))
     except Exception as e:
         alert(f"Cookie harvest error: {e}")
         return []
@@ -648,9 +695,13 @@ async def _scan_js_secrets(cfg: BrowserConfig) -> list[dict]:
                         continue
                     findings.append({
                         "type":     label,
-                        "value":    val[:80],
+                        **_redacted_value(val),
                         "source":   src if len(src) < 100 else src[-80:],
-                        "context":  content[max(0, match.start()-30): match.start()+len(val)+30].strip(),
+                        "context":  (
+                            content[max(0, match.start()-30): match.start()+len(val)+30]
+                            .replace(val, '[REDACTED]')
+                            .strip()
+                        ),
                     })
 
     return findings
@@ -661,7 +712,7 @@ def browser_scan_js_secrets(cfg: BrowserConfig) -> list[dict]:
     if not _need_camoufox("JS secrets scan"):
         return []
     try:
-        return asyncio.run(_scan_js_secrets(cfg))
+        return _run_async(_scan_js_secrets(cfg))
     except Exception as e:
         alert(f"JS secrets scan error: {e}")
         return []

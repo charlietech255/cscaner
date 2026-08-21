@@ -41,8 +41,12 @@ def _resolve(target: str) -> str:
 
 
 # ── MySQL brute force ─────────────────────────────────────────────────────────
-def mysql_brute(target: str, port: int = 3306, custom_creds: list = None) -> dict:
+def mysql_brute(target: str, port: int = 3306, custom_creds: list = None,
+                enable_credential_testing: bool = False) -> dict:
     section("MYSQL CREDENTIAL AUDIT")
+    if not enable_credential_testing:
+        warn("MySQL credential testing is disabled by default.")
+        return {'skipped': True, 'reason': 'credential testing not explicitly enabled'}
     ip = _resolve(target)
     if not ip:
         return {}
@@ -101,8 +105,12 @@ def mysql_brute(target: str, port: int = 3306, custom_creds: list = None) -> dic
 
 
 # ── PostgreSQL brute force ────────────────────────────────────────────────────
-def pgsql_brute(target: str, port: int = 5432, custom_creds: list = None) -> dict:
+def pgsql_brute(target: str, port: int = 5432, custom_creds: list = None,
+                enable_credential_testing: bool = False) -> dict:
     section("POSTGRESQL CREDENTIAL AUDIT")
+    if not enable_credential_testing:
+        warn("PostgreSQL credential testing is disabled by default.")
+        return {'skipped': True, 'reason': 'credential testing not explicitly enabled'}
     ip = _resolve(target)
     if not ip:
         return {}
@@ -333,7 +341,8 @@ def rdp_check(target: str, port: int = 3389) -> dict:
 
 
 # ── Combined service scan ─────────────────────────────────────────────────────
-def service_brute_suite(target: str, open_ports: list = None) -> dict:
+def service_brute_suite(target: str, open_ports: list = None,
+                        enable_credential_testing: bool = False) -> dict:
     """
     Run relevant service checks based on which ports are open.
     open_ports is the list of (port, banner) tuples from port_scan_common().
@@ -344,8 +353,10 @@ def service_brute_suite(target: str, open_ports: list = None) -> dict:
     results  = {}
 
     checks = [
-        (3306,  'MySQL',         mysql_brute),
-        (5432,  'PostgreSQL',    pgsql_brute),
+        (3306,  'MySQL',         lambda target, port: mysql_brute(
+            target, port, enable_credential_testing=enable_credential_testing)),
+        (5432,  'PostgreSQL',    lambda target, port: pgsql_brute(
+            target, port, enable_credential_testing=enable_credential_testing)),
         (6379,  'Redis',         redis_unauth_check),
         (27017, 'MongoDB',       mongodb_unauth_check),
         (9200,  'Elasticsearch', elasticsearch_unauth_check),

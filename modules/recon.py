@@ -270,7 +270,7 @@ def subdomain_enum(target: str, wordlist: list = None, workers: int = 30) -> lis
 _CLOUDFLARE_ASN = {'AS13335', 'AS209242'}
 
 def _find_origin_ips_via_mx(hostname: str) -> list:
-    """Attempt to find the real origin IP of a domain hidden behind Cloudflare via MX records."""
+    """Find related MX infrastructure; these addresses are not confirmed origins."""
     import socket
     import requests
     
@@ -310,13 +310,28 @@ def geoip_lookup(target: str) -> dict:
     info(f"Looking up: {BR}{W}{ip}{RS}\n")
 
     try:
-        # ip-api.com free tier requires HTTP (HTTPS returns 403)
+        # Use an HTTPS GeoIP provider; an MX address is related infrastructure,
+        # not proof of the web application's origin.
         if _stealth_session:
-            r = _stealth_session.get(f"http://ip-api.com/json/{ip}?fields=66846719", timeout=8)
+            r = _stealth_session.get(f"https://ipwho.is/{ip}", timeout=8)
         else:
-            r = requests.get(f"http://ip-api.com/json/{ip}?fields=66846719", timeout=8)
+            r = requests.get(f"https://ipwho.is/{ip}", timeout=8)
         d = r.json()
-        if d.get('status') == 'success':
+        if d.get('success'):
+            d = {
+                **d,
+                'query': d.get('ip', ip),
+                'country': d.get('country', 'N/A'),
+                'regionName': d.get('region', 'N/A'),
+                'lat': d.get('latitude', 'N/A'),
+                'lon': d.get('longitude', 'N/A'),
+                'timezone': (d.get('timezone') or {}).get('id', 'N/A'),
+                'isp': (d.get('connection') or {}).get('isp', 'N/A'),
+                'org': (d.get('connection') or {}).get('org', 'N/A'),
+                'as': (d.get('connection') or {}).get('asn', 'N/A'),
+                'mobile': d.get('is_mobile', 'N/A'),
+                'proxy': d.get('is_proxy', 'N/A'),
+            }
             # Detect Cloudflare edge IP
             asn = d.get('as', '')
             is_cf_edge = any(cf in asn for cf in _CLOUDFLARE_ASN)
@@ -324,10 +339,10 @@ def geoip_lookup(target: str) -> dict:
                 warn(f"This IP ({ip}) belongs to {BR}{Y}Cloudflare ({asn}){RS}")
                 warn("GeoIP shows Cloudflare's network location, NOT the origin server.")
                 
-                info("Auto-investigating MX records to find potential real origin IP...")
+                info("Checking MX records for related infrastructure (not confirmed origins)...")
                 origin_ips = _find_origin_ips_via_mx(hostname)
                 if origin_ips:
-                    ok("Found potential origin IPs bypassing Cloudflare via MX:")
+                    ok("Found related MX infrastructure IPs (not confirmed application origins):")
                     for oip in origin_ips:
                         print(f"  {BR}{M}◈{RS}  {BR}{R}{oip}{RS}")
                     d['potential_origin_ips'] = origin_ips

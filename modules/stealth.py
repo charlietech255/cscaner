@@ -11,11 +11,10 @@ import time
 import random
 import socket
 import subprocess
-from urllib.parse import quote
+import math
+from urllib.parse import quote, urlparse
 
 import requests
-from urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 # ── Realistic User-Agent pool ────────────────────────────────────────────────
 USER_AGENTS = [
@@ -110,6 +109,10 @@ class StealthSession:
         cookie_persist: bool = True,
         insecure_ssl: bool = False,
     ):
+        if not all(math.isfinite(value) and value >= 0 for value in (jitter_min, jitter_max)):
+            raise ValueError("jitter values must be finite and non-negative")
+        if jitter_min > jitter_max:
+            raise ValueError("jitter_min must not exceed jitter_max")
         self.proxy = self._parse_proxy(proxy)
         self.jitter_min = jitter_min
         self.jitter_max = jitter_max
@@ -125,6 +128,13 @@ class StealthSession:
         if not proxy_str:
             return None
         proxy_str = proxy_str.strip()
+        parsed = urlparse(proxy_str)
+        if parsed.scheme not in ('http', 'https', 'socks4', 'socks5'):
+            raise ValueError("proxy must use http, https, socks4, or socks5")
+        if not parsed.hostname:
+            raise ValueError("proxy must include a hostname")
+        if parsed.port is not None and not 1 <= parsed.port <= 65535:
+            raise ValueError("proxy port must be between 1 and 65535")
         # Auto-detect socks protocols and ensure PySocks is available
         if proxy_str.startswith(("socks4://", "socks5://")):
             try:
@@ -157,8 +167,6 @@ class StealthSession:
             headers["User-Agent"] = "Mozilla/5.0 (compatible; CSCAN/2.1)"
         if self.random_headers:
             headers["Accept-Language"] = random.choice(ACCEPT_LANGUAGES)
-            headers["Referer"] = random.choice(REFERERS)
-            headers["X-Forwarded-For"] = random_xff()
             headers["X-Requested-With"] = "XMLHttpRequest" if random.random() > 0.7 else None
         # Prune None values
         return {k: v for k, v in headers.items() if v is not None}
@@ -169,10 +177,13 @@ class StealthSession:
         user_headers = kwargs.pop("headers", {}) or {}
         req_headers.update(user_headers)
 
+        timeout = kwargs.pop("timeout", 10)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("request timeout must be a finite positive number")
         req_kwargs = {
             "headers": req_headers,
             "proxies": self.proxy,
-            "timeout": kwargs.pop("timeout", 10),
+            "timeout": timeout,
             "verify": kwargs.pop("verify", not self.insecure_ssl),
             "allow_redirects": kwargs.pop("allow_redirects", False),
             **kwargs,

@@ -1,0 +1,10 @@
+# CSCAN dependencies supported by Termux/Android
+# Install with: python3 -m pip install -r requirements-termux.txt
+requests
+colorama
+python-whois
+beautifulsoup4
+
+# Optional pure-Python additions may be installed separately when available:
+# python-nmap (requires the Termux nmap package: pkg install nmap)
+# PyMySQL (database checks; server/client compatibility varies by device)

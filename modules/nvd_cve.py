@@ -207,6 +207,9 @@ def live_cve_mapping(detected_versions: dict, ports_data: list = None) -> dict:
     info(f"Source: {BR}{C}NIST National Vulnerability Database (api.nvd.nist.gov){RS}")
     info(f"Cache TTL: {BR}{C}24 hours{RS}\n")
 
+    # Work on a copy so callers can reuse their original detection results.
+    detected_versions = dict(detected_versions or {})
+
     # Merge in banner-extracted versions
     if ports_data:
         from modules.web import CVE_DATABASE

@@ -19,8 +19,6 @@ import re
 import time
 
 import requests
-from urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 from modules.ui import (
     section, ok, warn, alert, info, critical, divider,
@@ -72,21 +70,16 @@ def _check_protocols(hostname: str, port: int) -> dict:
     info("Checking protocol support…")
     result = {'tls12': False, 'tls13': False, 'weak': []}
 
-    # TLS 1.2
-    ok12, ver, _ = _connect_tls(hostname, port)
+    # Pin the negotiated version; a default context may otherwise negotiate TLS 1.3.
+    ok12, ver, _ = _connect_tls(hostname, port, ssl.TLSVersion.TLSv1_2)
     if ok12:
         result['tls12'] = True
 
     # TLS 1.3
     try:
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode    = ssl.CERT_NONE
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-        ctx.maximum_version = ssl.TLSVersion.TLSv1_3
-        raw  = socket.create_connection((hostname, port), timeout=TIMEOUT)
-        conn = ctx.wrap_socket(raw, server_hostname=hostname)
-        conn.close()
+        ok13, _, _ = _connect_tls(hostname, port, ssl.TLSVersion.TLSv1_3)
+        if not ok13:
+            raise ssl.SSLError("TLS 1.3 handshake failed")
         result['tls13'] = True
         ok(f"TLS 1.3  {BR}{G}SUPPORTED{RS}")
     except Exception:
@@ -134,7 +127,7 @@ _WEAK_CIPHER_PATTERNS = [
 
 def _check_ciphers(hostname: str, port: int) -> dict:
     info("Checking active cipher suite…")
-    result = {'cipher': None, 'weak_ciphers': []}
+    result = {'cipher': None, 'weak_ciphers': [], 'supported_weak_ciphers': []}
 
     ok_conn, version, cipher = _connect_tls(hostname, port)
     if not ok_conn or not cipher:
@@ -149,6 +142,33 @@ def _check_ciphers(hostname: str, port: int) -> dict:
         if pat.search(cipher_name):
             result['weak_ciphers'].append(reason)
             alert(f"Weak cipher detected: {BR}{R}{cipher_name}{RS}  — {reason}")
+
+    # Probe weak suites individually. The default handshake alone only reveals
+    # the server's preferred suite, not every suite it accepts.
+    candidates = []
+    for candidate in ssl.create_default_context().get_ciphers():
+        name = candidate['name']
+        if any(pattern.search(name) for pattern, _ in _WEAK_CIPHER_PATTERNS):
+            candidates.append(name)
+    for candidate in dict.fromkeys(candidates):
+        try:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            ctx.minimum_version = ssl.TLSVersion.TLSv1
+            ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+            ctx.set_ciphers(candidate)
+            ok_conn, _, negotiated = _connect_tls(hostname, port, ctx_override=ctx)
+            if ok_conn and negotiated and negotiated[0] == candidate:
+                result['supported_weak_ciphers'].append(candidate)
+        except (ssl.SSLError, ValueError):
+            continue
+
+    for candidate in result['supported_weak_ciphers']:
+        for pattern, reason in _WEAK_CIPHER_PATTERNS:
+            if pattern.search(candidate) and reason not in result['weak_ciphers']:
+                result['weak_ciphers'].append(reason)
+        alert(f"Weak cipher accepted: {BR}{R}{candidate}{RS}")
 
     if not result['weak_ciphers']:
         ok(f"Active cipher appears strong.")
@@ -177,31 +197,37 @@ _HEARTBLEED_HELLO = (
 _HEARTBLEED_REQ = b'\x18\x03\x02\x00\x03\x01\x40\x00'  # Heartbeat request, length=16384
 
 
-def _check_heartbleed(hostname: str, port: int) -> bool:
+def _check_heartbleed(hostname: str, port: int) -> dict:
     info("Checking for Heartbleed (CVE-2014-0160)…")
+    result = {'status': 'inconclusive', 'evidence': None}
     try:
-        s = socket.create_connection((hostname, port), timeout=TIMEOUT)
-        s.send(_HEARTBLEED_HELLO)
-        time.sleep(0.5)
-        s.recv(4096)   # consume server hello
-        s.send(_HEARTBLEED_REQ)
-        time.sleep(0.3)
-        resp = s.recvfrom(65536)
-        s.close()
-        # If response is a heartbeat record type 0x18 with data > 3 bytes → vulnerable
-        if resp and resp[0] and len(resp[0]) > 7 and resp[0][0] == 0x18:
-            return True
-    except Exception:
-        pass
-    return False
+        with socket.create_connection((hostname, port), timeout=TIMEOUT) as sock:
+            sock.settimeout(TIMEOUT)
+            sock.sendall(_HEARTBLEED_HELLO)
+            handshake = sock.recv(16384)
+            if not handshake:
+                return result
+            sock.sendall(_HEARTBLEED_REQ)
+            response = sock.recv(65536)
+
+        if response and response[0] == 0x18 and len(response) >= 8:
+            result['status'] = 'vulnerable'
+            result['evidence'] = f'Heartbeat response received ({len(response)} bytes)'
+        else:
+            result['status'] = 'not_vulnerable'
+            result['evidence'] = 'No heartbeat response with leaked data observed'
+    except (OSError, ssl.SSLError) as exc:
+        result['evidence'] = f'Probe could not complete: {type(exc).__name__}'
+    return result
 
 
 # ── HSTS check ────────────────────────────────────────────────────────────────
-def _check_hsts(hostname: str) -> dict:
+def _check_hsts(hostname: str, port: int = 443) -> dict:
     info("Checking HSTS (Strict-Transport-Security)…")
     result = {'present': False, 'max_age': None, 'includeSubDomains': False, 'preload': False}
     try:
-        r = requests.get(f'https://{hostname}', timeout=TIMEOUT, verify=False,
+        host = f'[{hostname}]' if ':' in hostname and not hostname.startswith('[') else hostname
+        r = requests.get(f'https://{host}:{port}', timeout=TIMEOUT, verify=True,
                          headers={'User-Agent': 'Mozilla/5.0 (compatible; CSCAN/2.2)'})
         hsts = r.headers.get('Strict-Transport-Security', '')
         if hsts:
@@ -248,14 +274,16 @@ def ssl_deep_audit(target: str, port: int = 443) -> dict:
     print(f"\n  {BR}{M}◈ Heartbleed{RS}")
     hb = _check_heartbleed(hostname, port)
     result['heartbleed'] = hb
-    if hb:
+    if hb['status'] == 'vulnerable':
         critical("HEARTBLEED VULNERABLE (CVE-2014-0160)! Update OpenSSL immediately.")
-    else:
+    elif hb['status'] == 'not_vulnerable':
         ok("Not vulnerable to Heartbleed.")
+    else:
+        warn("Heartbleed probe inconclusive; verify the server's OpenSSL version separately.")
 
     # ── HSTS ─────────────────────────────────────────────────────────────────
     print(f"\n  {BR}{M}◈ HSTS{RS}")
-    result['hsts'] = _check_hsts(hostname)
+    result['hsts'] = _check_hsts(hostname, port)
 
     # ── POODLE note ───────────────────────────────────────────────────────────
     if 'SSLv3' in result['protocols'].get('weak', []):
@@ -272,7 +300,7 @@ def ssl_deep_audit(target: str, port: int = 443) -> dict:
         issues += [f"Weak protocol: {p}" for p in result['protocols']['weak']]
     if result['ciphers'].get('weak_ciphers'):
         issues += result['ciphers']['weak_ciphers']
-    if result['heartbleed']:
+    if result['heartbleed'].get('status') == 'vulnerable':
         issues.append('Heartbleed (CVE-2014-0160)')
     if result['poodle']:
         issues.append('POODLE (CVE-2014-3566)')

@@ -121,7 +121,7 @@ def _call_gemini(api_key: str, prompt: str, max_tokens: int = 2048) -> str | Non
         ],
         "generationConfig": {
             "maxOutputTokens":  max_tokens,
-            "temperature":      0.4,
+            "temperature":      0.1,
             "topP":             0.9,
         },
         "safetySettings": [
@@ -200,23 +200,170 @@ def _call_gemini(api_key: str, prompt: str, max_tokens: int = 2048) -> str | Non
 #  PROMPT BUILDERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_findings_prompt(target: str, results: dict) -> str:
-    """Convert SESSION results into a detailed security audit prompt."""
+def _format_port_evidence(ports) -> list[str]:
+    """Format scanner port results across tuple and dictionary result shapes."""
+    formatted = []
+    for item in ports or []:
+        if isinstance(item, dict):
+            port = item.get('port', 'unknown')
+            state = item.get('state', 'open')
+            banner = item.get('banner') or item.get('service') or 'no banner'
+            formatted.append(f"{port}/tcp state={state} banner={str(banner)[:40]}")
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            banner = item[1] or 'no banner'
+            formatted.append(f"{item[0]}/tcp banner={str(banner)[:40]}")
+    return formatted
+
+def _ground_truth_summary(results: dict) -> str:
+    """Convert raw scan output into a strict evidence-only summary.
+
+    This prevents the model from inventing findings beyond the facts we observed.
+    """
+    if not results:
+        return "GROUND TRUTH ONLY (do not invent anything):\nNo verified findings were collected. No vulnerability claims should be made based on missing data."
 
     lines = [
-        "You are a senior cybersecurity analyst. Below are the raw technical findings"
-        " from an automated security scan of a server that the user owns and has full"
-        " authorization to test. Please produce a professional security report with"
-        " the following sections:\n",
+        "GROUND TRUTH ONLY (do not invent anything):",
+        "Only report findings that are explicitly supported by the evidence below.",
+        "If a result is missing, say so instead of guessing.",
+        "Do not claim a CVE, exploit, or vulnerability unless the raw scan evidence directly supports it.",
+        "",
+    ]
+
+    dns = results.get('dns', {})
+    if dns:
+        lines.append(f"DNS: ipv4={dns.get('ipv4', [])}, mx={dns.get('mx', [])}, ns={dns.get('ns', [])}")
+    else:
+        lines.append("DNS: no evidence collected")
+
+    ports = results.get('ports_common', results.get('ports_full', []))
+    if ports:
+        port_entries = []
+        for item in ports:
+            if isinstance(item, dict):
+                port = item.get('port', 'unknown')
+                state = item.get('state', 'unknown')
+                banner = item.get('banner') or item.get('service') or 'no banner'
+                port_entries.append(f"{port}/tcp state={state} banner={banner}")
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                port = item[0]
+                banner = item[1] if item[1] else 'no banner'
+                port_entries.append(f"{port}/tcp banner={banner}")
+        lines.append("OPEN PORTS: " + "; ".join(port_entries))
+    else:
+        lines.append("OPEN PORTS: no verified open ports")
+
+    ssh = results.get('ssh', {})
+    if ssh:
+        if ssh.get('vulnerable'):
+            credential = ssh.get('credential') or ('unknown', '')
+            username = credential[0] if isinstance(credential, (list, tuple)) else 'unknown'
+            lines.append(f"SSH AUDIT: accepted credentials observed for {username}; password redacted; banner={ssh.get('banner', 'unknown')}")
+        elif ssh.get('open'):
+            lines.append(f"SSH AUDIT: port open; no weak credentials observed; banner={ssh.get('banner', 'unknown')}")
+        else:
+            lines.append("SSH AUDIT: no verified SSH exposure in collected evidence")
+    else:
+        lines.append("SSH AUDIT: no evidence collected")
+
+    ftp = results.get('ftp', {})
+    if ftp:
+        if ftp.get('anonymous'):
+            lines.append(f"FTP AUDIT: anonymous login succeeded; listing={ftp.get('listing', [])}")
+        elif ftp.get('open'):
+            lines.append("FTP AUDIT: FTP service open but anonymous login not observed")
+        else:
+            lines.append("FTP AUDIT: no verified FTP exposure in collected evidence")
+    else:
+        lines.append("FTP AUDIT: no evidence collected")
+
+    ssl = results.get('ssl', {})
+    if ssl:
+        subject = ssl.get('subject', ssl.get('Subject', {}))
+        issuer = ssl.get('issuer', ssl.get('Issuer', {}))
+        lines.append(
+            "SSL/TLS: "
+            f"CN={subject.get('commonName', subject.get('common_name', 'unknown'))}, "
+            f"issuer={issuer.get('organizationName', issuer.get('organization_name', 'unknown'))}, "
+            f"not_after={ssl.get('Not After', ssl.get('not_after', 'unknown'))}, "
+            f"protocol={ssl.get('Protocol', ssl.get('protocol', 'unknown'))}"
+        )
+    else:
+        lines.append("SSL/TLS: no evidence collected")
+
+    web = results.get('web_vuln', {})
+    if web:
+        exposed = web.get('exposed', [])
+        forb = web.get('forbidden', [])
+        if exposed:
+            entries = [f"{path} status={status} bytes={size}" for path, size, status in exposed]
+            lines.append("WEB EXPOSED PATHS: " + "; ".join(entries))
+        else:
+            lines.append("WEB EXPOSED PATHS: none observed")
+        if forb:
+            lines.append("FORBIDDEN PATHS: " + "; ".join(f"{path}" for path, _, _ in forb[:5]))
+    else:
+        lines.append("WEB EXPOSED PATHS: no evidence collected")
+
+    hdr = results.get('headers', {})
+    if hdr:
+        lines.append(f"HTTP HEADERS: score={hdr.get('score', 0)} missing={hdr.get('missing', [])} leaks={hdr.get('leaks', [])}")
+    else:
+        lines.append("HTTP HEADERS: no evidence collected")
+
+    cms = results.get('cms', [])
+    if cms:
+        lines.append(f"CMS/TECH: {cms}")
+    else:
+        lines.append("CMS/TECH: no evidence collected")
+
+    dirs = results.get('dir_brute', [])
+    if dirs:
+        lines.append("ACCESSIBLE PATHS: " + "; ".join(f"{path}" for path, _ in dirs[:10]))
+    else:
+        lines.append("ACCESSIBLE PATHS: no evidence collected")
+
+    subs = results.get('subdomains', [])
+    if subs:
+        lines.append("SUBDOMAINS: " + "; ".join(f"{host}" for host, _ in subs[:10]))
+    else:
+        lines.append("SUBDOMAINS: no evidence collected")
+
+    lines.append("")
+    lines.append("ONLY VERIFIED FINDINGS SHOULD BE DISCUSSED. Missing evidence must not be turned into a vulnerability claim.")
+    return "\n".join(lines)
+
+
+def _build_findings_prompt(target: str, results: dict) -> str:
+    """Convert SESSION results into a detailed security audit prompt."""
+    ground_truth = _ground_truth_summary(results)
+
+    lines = [
+        "You are a senior cybersecurity analyst. You are allowed to explain the scan results only using the evidence below.",
+        "Do not invent vulnerabilities, CVEs, exploitability, or impact not explicitly supported by the ground-truth summary.",
+        "If data is missing or ambiguous, state that clearly instead of guessing.",
+        "If no verified issues are present, say so plainly.",
+        "",
         "1. EXECUTIVE SUMMARY (2-3 sentences, non-technical overview)",
-        "2. CRITICAL FINDINGS (bullet list of the most dangerous issues found)",
-        "3. RISK ASSESSMENT (rate overall risk: CRITICAL / HIGH / MEDIUM / LOW with justification)",
+        "2. VERIFIED FINDINGS (bullet list of only the issues directly supported by the evidence)",
+        "3. RISK ASSESSMENT (rate overall risk: CRITICAL / HIGH / MEDIUM / LOW with justification based only on evidence)",
         "4. DETAILED ANALYSIS (explain what each finding means and why it matters)",
         "5. PRIORITIZED REMEDIATION STEPS (numbered, most urgent first)",
         "6. SECURITY HARDENING CHECKLIST (quick-win fixes the admin can apply today)",
-        "7. CONCLUSION\n",
-        f"TARGET: {target}\n",
-        "=== SCAN FINDINGS ===\n",
+        "7. CONCLUSION",
+        "",
+        "STRICT CONSTRAINTS:",
+        "- Base your report STRICTLY on the provided evidence and do not add speculative claims.",
+        "- If the findings do not explicitly state a vulnerability exists, do not write about one.",
+        "- Do not assume a port is vulnerable just because it is open.",
+        "- If CVEs are reported based on version numbers, mention that they might be false positives due to backported patches.",
+        "- If no verified vulnerabilities were found, clearly state that none were detected from the evidence.",
+        "- Do not use unsupported phrases like 'exploitable by default' or 'likely compromised' without evidence.",
+        f"TARGET: {target}",
+        "",
+        "=== GROUND TRUTH EVIDENCE ===",
+        ground_truth,
+        "=== END OF GROUND TRUTH EVIDENCE ===",
     ]
 
     # DNS findings
@@ -227,8 +374,7 @@ def _build_findings_prompt(target: str, results: dict) -> str:
     # Open ports
     ports = results.get('ports_common', results.get('ports_full', []))
     if ports:
-        port_list = [f"{p}/tcp ({banner[:40] if banner else 'no banner'})" for p, banner in ports]
-        lines.append(f"OPEN PORTS: {', '.join(port_list)}")
+        lines.append(f"OPEN PORTS: {', '.join(_format_port_evidence(ports))}")
     else:
         lines.append("OPEN PORTS: None detected on common ports.")
 
@@ -236,8 +382,9 @@ def _build_findings_prompt(target: str, results: dict) -> str:
     ssh = results.get('ssh', {})
     if ssh:
         if ssh.get('vulnerable'):
-            u, p = ssh['credential']
-            lines.append(f"SSH AUDIT: VULNERABLE — Accepted credentials {u}:{p} | Banner: {ssh.get('banner','')}")
+            credential = ssh.get('credential') or ('unknown', '')
+            username = credential[0] if isinstance(credential, (list, tuple)) else 'unknown'
+            lines.append(f"SSH AUDIT: VULNERABLE — Accepted credentials for {username}; password redacted | Banner: {ssh.get('banner','')}")
         elif ssh.get('open'):
             lines.append(f"SSH AUDIT: Port open, no weak credentials found | Banner: {ssh.get('banner','')}")
         else:

@@ -137,15 +137,18 @@ def solve_cloudflare_waf(cfg: CloudflareBypassConfig) -> tuple[str, str] | None:
     Returns (cf_clearance, user_agent) or None.
     """
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Already inside an event loop (cscan.py uses asyncio.run)
+        # When called from within an already-running event loop (cscan.py uses asyncio.run),
+        # we offload to a new thread so asyncio.run() works cleanly.
+        try:
+            asyncio.get_running_loop()
+            # We're inside a running loop — use a thread
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(asyncio.run, _solve_cloudflare_async(cfg))
                 return future.result(timeout=cfg.timeout_ms / 1000 + 10)
-        else:
-            return loop.run_until_complete(_solve_cloudflare_async(cfg))
+        except RuntimeError:
+            # No running loop — safe to use asyncio.run() directly
+            return asyncio.run(_solve_cloudflare_async(cfg))
     except Exception as e:
         alert(f"Cloudflare bypass failed: {e}")
         return None

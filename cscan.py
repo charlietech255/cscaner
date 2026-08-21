@@ -99,6 +99,7 @@ from modules.browser_engine import (
 # ── New v2.2 modules ──────────────────────────────────────────────────────────
 from modules.active_vuln  import active_vuln_scan
 from modules.active_vuln  import set_stealth_session as activevuln_set_stealth
+from modules.active_vuln  import set_auth_header as activevuln_set_auth_header
 from modules.nvd_cve      import live_cve_mapping, menu_nvd_lookup
 from modules.udp_scanner  import udp_scan_suite
 from modules.ssl_audit    import ssl_deep_audit
@@ -112,6 +113,7 @@ from modules.crawler      import set_insecure_ssl as crawler_set_insecure_ssl
 from modules.path_api_enum import enumerate_api
 from modules.path_api_enum import set_stealth_session as apienum_set_stealth
 from modules.path_api_enum import set_insecure_ssl as apienum_set_insecure_ssl
+from modules.utils import normalize_target
 
 # ── Session state ─────────────────────────────────────────────────────────────
 SESSION = {
@@ -122,6 +124,7 @@ SESSION = {
     'log':         [],
     'start_time':  None,
     'gemini_key':  None,   # Gemini API key (stored in-memory only)
+    'credential_testing': False,
     'auth': {
         'cookies':     {},     # dict of cookie name→value for authenticated scanning
         'header':      None,   # Authorization header value (e.g. 'Bearer xxx')
@@ -198,7 +201,12 @@ def get_target(force: bool = False) -> str:
     t = prompt_target(T("prompt_target"))
     if not t:
         return None
-    SESSION['target']  = t
+    try:
+        t = normalize_target(t)
+    except ValueError as exc:
+        alert(str(exc))
+        return None
+    SESSION['target'] = t
     SESSION['use_ssl'] = t.startswith('https://')
     return t
 
@@ -208,15 +216,14 @@ def set_target():
     t = prompt_target()
     if not t:
         return
+    try:
+        t = normalize_target(t)
+    except ValueError as exc:
+        alert(str(exc))
+        return
     SESSION['target'] = t
-    # Auto-detect SSL from URL prefix
     SESSION['use_ssl'] = t.startswith('https://')
     ok(f"{T('target_set')} {BR}{G}{t}{RS}")
-
-    if not SESSION['use_ssl'] and not t.startswith('http://'):
-        # No explicit protocol — default to HTTPS
-        SESSION['use_ssl'] = True
-        ok(T("ssl_enabled"))
 
     # Quick DNS resolve
     import socket
@@ -241,6 +248,8 @@ def _apply_stealth():
     set_scan_timeout(cfg.get('scan_timeout'))  # None clears override
 
     apienum_set_insecure_ssl(insecure_ssl)
+    crawler_set_insecure_ssl(insecure_ssl)
+    activevuln_set_auth_header(SESSION['auth'].get('header'))
 
     if cfg['enabled']:
         sess = StealthSession(
@@ -256,6 +265,7 @@ def _apply_stealth():
         recon_set_stealth(sess)
         exploit_set_stealth(sess)
         activevuln_set_stealth(sess)
+        crawler_set_stealth(sess)
         apienum_set_stealth(sess)
     else:
         web_set_stealth(None)
@@ -453,7 +463,8 @@ async def handle_ssh():
     delay = 0.0
     if SESSION['stealth']['enabled']:
         delay = random.uniform(SESSION['stealth']['jitter_min'], SESSION['stealth']['jitter_max'])
-    res = await _run_sync(ssh_audit, t, port, creds, delay=delay)
+    res = await _run_sync(ssh_audit, t, port, creds, delay,
+                          SESSION['credential_testing'])
     SESSION['results']['ssh'] = res
     pause()
 
@@ -471,7 +482,8 @@ async def handle_http_auth():
     _apply_stealth()
     section(T("http_auth_title"))
     path = '/'
-    res  = await _run_sync(http_auth_brute, t, path)
+    res  = await _run_sync(http_auth_brute, t, path, None,
+                           SESSION['credential_testing'])
     SESSION['results']['http_auth'] = res
     pause()
 
@@ -559,7 +571,8 @@ async def handle_service_brute():
     open_ports = SESSION['results'].get('ports_common', [])
     if not open_ports:
         warn("No port scan data found. Run port scan first (or proceed to check all default ports).")
-    res = await _run_sync(service_brute_suite, t, open_ports or None)
+    res = await _run_sync(service_brute_suite, t, open_ports or None,
+                          SESSION['credential_testing'])
     SESSION['results']['service_brute'] = res
     pause()
 
@@ -673,7 +686,8 @@ async def handle_api_enum():
     workers = TIMING_PROFILES.get(timing, {}).get('workers', 15)
 
     res = await _run_sync(enumerate_api, t, SESSION['use_ssl'],
-                          wordlist=wl, workers=workers, probe_methods=True)
+                          wordlist=wl, workers=workers, probe_methods=True,
+                          probe_unsafe_methods=False)
     SESSION['results']['api_enum'] = res
     pause()
 
@@ -881,7 +895,8 @@ async def handle_auto_scan():
     ]
 
     if 'paramiko' not in unavailable_optional:
-        steps.append(("SSH Audit", _run_sync, (ssh_audit, t, 22, None, ssh_delay)))
+        steps.append(("SSH Audit", _run_sync, (ssh_audit, t, 22, None, ssh_delay,
+                            SESSION['credential_testing'])))
 
     # ── Advanced SPA / JS Scanning ─────────────────────────────────────────────
     if _CAMOUFOX_AVAILABLE:
@@ -1078,15 +1093,25 @@ async def handle_export():
         pause()
         return
 
-    def _clean(obj):
+    sensitive_keys = {
+        'password', 'passwd', 'secret', 'token', 'cookie', 'cookies',
+        'authorization', 'credential', 'credentials', 'private_key',
+        'api_key', 'access_key',
+    }
+
+    def _clean(obj, key_name=''):
         """Recursively make any value JSON-safe.
         datetime → ISO 8601 str, tuple → list, anything else → str() fallback."""
+        normalized_key = key_name.lower().replace('-', '_')
+        if (normalized_key in sensitive_keys or
+            normalized_key.endswith(('_secret', '_token', '_key'))):
+            return '[REDACTED]'
         if isinstance(obj, datetime):
             return obj.isoformat()
         if isinstance(obj, dict):
-            return {str(k): _clean(v) for k, v in obj.items()}
+            return {str(k): _clean(v, str(k)) for k, v in obj.items()}
         if isinstance(obj, (list, tuple)):
-            return [_clean(i) for i in obj]
+            return [_clean(i, key_name) for i in obj]
         try:
             json.dumps(obj)
             return obj
@@ -1095,7 +1120,7 @@ async def handle_export():
 
     reports_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports')
     os.makedirs(reports_dir, exist_ok=True)
-    ts   = datetime.now().strftime('%Y%m%d_%H%M%S')
+    ts   = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     json_name = os.path.join(reports_dir, f"cscan_report_{ts}.json")
     txt_name  = os.path.join(reports_dir, f"cscan_report_{ts}.txt")
 
@@ -1103,7 +1128,8 @@ async def handle_export():
         'target':    SESSION['target'],
         'ip':        SESSION['ip'],
         'timestamp': datetime.now().isoformat(),
-        'results':   {k: _clean(v) for k, v in SESSION['results'].items()},
+        'report_redacted': True,
+        'results':   {k: _clean(v, k) for k, v in SESSION['results'].items()},
     }
 
     # Generate well-formatted TXT report
@@ -1181,10 +1207,10 @@ async def handle_export():
 
     try:
         # Save JSON
-        with open(json_name, 'w') as f:
+        with open(json_name, 'w', encoding='utf-8') as f:
             json.dump(export, f, indent=2)
         # Save TXT
-        with open(txt_name, 'w') as f:
+        with open(txt_name, 'w', encoding='utf-8') as f:
             f.write("\n".join(lines))
         
         ok(f"{T('export_ok')} {BR}{G}{txt_name}{RS} (and .json)")
@@ -1632,6 +1658,10 @@ def build_parser():
     )
     parser.add_argument("--stealth", action="store_true", help="Enable stealth / evasion settings")
     parser.add_argument("--insecure", action="store_true", help="Allow insecure SSL certificates")
+    parser.add_argument(
+        "--credential-testing", action="store_true",
+        help="Enable authorized credential guessing for SSH, HTTP Basic Auth, and databases",
+    )
     parser.add_argument("--list-modules", action="store_true", help="List supported non-interactive modules")
     return parser
 
@@ -1647,12 +1677,16 @@ async def main():
         return
 
     if args.target:
-        SESSION['target'] = args.target
-        SESSION['use_ssl'] = args.target.startswith('https://')
+        try:
+            SESSION['target'] = normalize_target(args.target)
+        except ValueError as exc:
+            parser.error(str(exc))
+        SESSION['use_ssl'] = SESSION['target'].startswith('https://')
         if args.stealth:
             SESSION['stealth']['enabled'] = True
         if args.insecure:
             SESSION['stealth']['insecure_ssl'] = True
+        SESSION['credential_testing'] = args.credential_testing
 
         _apply_stealth()
         mod = args.module or "auto"

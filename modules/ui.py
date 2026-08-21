@@ -112,6 +112,7 @@ def _build_menu() -> str:
 
 {BR}{C}  ● v3.0 — CRAWLER & AUTH{RS}
     {M}[42]{RS} Web Crawler (Discovery)   {M}[43]{RS} Auth / Session Config
+    {M}[44]{RS} Path/API Enumerator
 
   {DM}───────────────────────────────────────────────────────{RS}
     {R}[00]{RS} {T("menu_exit")}
@@ -158,7 +159,12 @@ def spinner(message: str, secs: float = 0.0):
     sys.stdout.write('\r' + ' ' * 60 + '\r')
 
 def progress_bar(current: int, total: int, label: str = ''):
-    pct = int((current / total) * 25)
+    if total <= 0:
+        current = 0
+        pct = 0
+    else:
+        current = max(0, min(current, total))
+        pct = int((current / total) * 25)
     bar = f"{G}{'#' * pct}{DM}{'.' * (25 - pct)}{RS}"
     sys.stdout.write(f"\r  {C}[{bar}{C}]{RS} {current}/{total} {DM}{label}{RS}  ")
     sys.stdout.flush()
@@ -168,14 +174,17 @@ def print_table(headers: list, rows: list):
     if not rows:
         warn(T("no_results"))
         return
-    col_w = [len(h) for h in headers]
-    for row in rows:
+    column_count = max(len(headers), *(len(row) for row in rows))
+    normalized_headers = [str(h) for h in headers] + [''] * (column_count - len(headers))
+    normalized_rows = [list(row) + [''] * (column_count - len(row)) for row in rows]
+    col_w = [len(h) for h in normalized_headers]
+    for row in normalized_rows:
         for i, cell in enumerate(row):
             col_w[i] = max(col_w[i], len(str(cell)))
     sep  = f"  {C}+" + "+".join(["─" * (w + 2) for w in col_w]) + f"+{RS}"
-    hdr  = f"  {C}|" + "|".join(f" {BR}{W}{h:<{col_w[i]}}{RS}{C}" for i, h in enumerate(headers)) + f"|{RS}"
+    hdr  = f"  {C}|" + "|".join(f" {BR}{W}{h:<{col_w[i]}}{RS}{C}" for i, h in enumerate(normalized_headers)) + f"|{RS}"
     print(sep); print(hdr); print(sep)
-    for row in rows:
+    for row in normalized_rows:
         cells = []
         for i, cell in enumerate(row):
             s = str(cell)

@@ -390,7 +390,7 @@ def set_lang(code: str):
 
 def _load_config() -> dict:
     try:
-        with open(_CONFIG_PATH, "r") as f:
+        with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -398,8 +398,13 @@ def _load_config() -> dict:
 
 def _save_config(cfg: dict):
     try:
-        with open(_CONFIG_PATH, "w") as f:
+        temp_path = f"{_CONFIG_PATH}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, _CONFIG_PATH)
+        os.chmod(_CONFIG_PATH, 0o600)
     except Exception:
         pass   # not critical — silently ignore
 

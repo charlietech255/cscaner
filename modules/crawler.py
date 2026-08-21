@@ -193,8 +193,11 @@ def _extract_js_secrets(js_text: str) -> list:
         for match in pattern.finditer(js_text[:200_000]):
             secrets.append({
                 'pattern': pattern.pattern[:40],
-                'value': match.group(1)[:60],
-                'context': js_text[max(0, match.start()-20):match.end()+20][:100],
+                'value': '[REDACTED]',
+                'length': len(match.group(1)),
+                'sha256_12': hashlib.sha256(match.group(1).encode('utf-8')).hexdigest()[:12],
+                'context': js_text[max(0, match.start()-20):match.end()+20]
+                    .replace(match.group(1), '[REDACTED]')[:100],
             })
     return secrets
 
@@ -275,10 +278,16 @@ class WebCrawler:
                 self.visited.discard(found_url)  # ensure we visit it
 
     def _is_same_domain(self, url: str) -> bool:
-        """Check if URL belongs to the same domain."""
+        """Check whether a URL has the same origin as the crawl target."""
         try:
             parsed = urlparse(url)
-            return parsed.hostname == self.domain
+            if parsed.scheme not in ('http', 'https'):
+                return False
+            return (
+                parsed.hostname == self.parsed_base.hostname
+                and parsed.port == self.parsed_base.port
+                and parsed.scheme == self.parsed_base.scheme
+            )
         except Exception:
             return False
 
@@ -424,15 +433,19 @@ class WebCrawler:
 
             # Process JS files
             for js_url in parser.scripts[:20]:  # cap JS files per page
-                if self._is_same_domain(js_url) or True:  # also check external JS
-                    js_r = _get(js_url, timeout=5, cookies=self.cookies)
-                    if js_r and js_r.status_code == 200 and len(js_r.content) < 2_000_000:
-                        endpoints = _extract_js_endpoints(js_r.text)
-                        for ep in endpoints:
-                            full = urljoin(self.base_url, ep)
+                # Never send authenticated crawler state to third-party scripts.
+                if not self._is_same_domain(js_url):
+                    continue
+                headers = {'Authorization': self.auth_header} if self.auth_header else None
+                js_r = _get(js_url, timeout=5, cookies=self.cookies, headers=headers)
+                if js_r and js_r.status_code == 200 and len(js_r.content) < 2_000_000:
+                    endpoints = _extract_js_endpoints(js_r.text)
+                    for ep in endpoints:
+                        full = urljoin(self.base_url, ep)
+                        if self._is_same_domain(full):
                             self.js_endpoints.add(full)
-                        secrets = _extract_js_secrets(js_r.text)
-                        self.js_secrets.extend(secrets)
+                    secrets = _extract_js_secrets(js_r.text)
+                    self.js_secrets.extend(secrets)
 
             # Also check inline scripts
             inline_scripts = re.findall(r'<script[^>]*>(.*?)</script>', r.text, re.S | re.I)

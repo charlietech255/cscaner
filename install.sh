@@ -80,19 +80,21 @@ PACKAGES="requests colorama python-whois beautifulsoup4"
 
 # Show what will be installed
 if [ $IS_TERMUX -eq 1 ]; then
-    echo -e "${YELLOW}[*] Termux mode: Skipping paramiko and python-nmap${RESET}"
-    echo -e "${YELLOW}[!] SSH auditing will not be available${RESET}"
-    echo -e "${GREEN}[+] Web scanning features fully available${RESET}"
+    echo -e "${YELLOW}[*] Termux mode: using requirements-termux.txt${RESET}"
+    echo -e "${YELLOW}[!] Browser/Camoufox and Paramiko SSH features are unavailable on Termux${RESET}"
+    echo -e "${GREEN}[+] Core DNS, web, crawler, API, TLS, OSINT, and report features are supported${RESET}"
 else
     echo -e "${GREEN}[+] Installing optional packages: paramiko, python-nmap${RESET}"
-    # Add python-nmap only if not Termux
     PACKAGES="$PACKAGES python-nmap"
-    # Add paramiko only if not Termux (requires Rust for cryptography compilation)
     PACKAGES="$PACKAGES paramiko"
 fi
 
 echo ""
-pip install --upgrade pip setuptools 2>&1 | grep -E "(Successfully|already)" || true
+if [ $IS_TERMUX -eq 1 ]; then
+    pip install -r requirements-termux.txt
+else
+    pip install --upgrade pip setuptools 2>&1 | grep -E "(Successfully|already)" || true
+fi
 
 for pkg in $PACKAGES; do
     echo -ne "  Installing $pkg... "

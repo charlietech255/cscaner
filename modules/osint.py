@@ -17,8 +17,6 @@ import urllib.parse
 from datetime import datetime
 
 import requests
-from urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 from modules.ui import (
     section, ok, warn, alert, info, critical, divider,
@@ -34,7 +32,7 @@ def _get(url, params=None, headers=None, timeout=TIMEOUT) -> requests.Response |
     if headers:
         h.update(headers)
     try:
-        return requests.get(url, params=params, headers=h, timeout=timeout, verify=False)
+        return requests.get(url, params=params, headers=h, timeout=timeout, verify=True)
     except Exception:
         return None
 
@@ -126,7 +124,7 @@ def wayback_endpoints(target: str, max_urls: int = 50) -> list:
 
     # CDX API — returns all crawled URLs
     r = _get(
-        'http://web.archive.org/cdx/search/cdx',
+        'https://web.archive.org/cdx/search/cdx',
         params={
             'url':     f'{hostname}/*',
             'output':  'json',
