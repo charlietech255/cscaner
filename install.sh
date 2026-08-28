@@ -105,6 +105,23 @@ for pkg in $PACKAGES; do
     fi
 done
 
+# Install WAF Bypass (Camoufox) on non-Termux systems
+if [ $IS_TERMUX -eq 0 ]; then
+    echo ""
+    echo -e "${BLUE}[*] Installing Advanced WAF Bypass Engine (Camoufox)...${RESET}"
+    if pip install "camoufox[geoip]" -q 2>&1; then
+        echo -e "  ${GREEN}[OK]${RESET} camoufox package installed"
+        echo -ne "  Fetching browser binaries... "
+        if python3 -m camoufox fetch > /dev/null 2>&1; then
+            echo -e "${GREEN}[OK]${RESET}"
+        else
+            echo -e "${YELLOW}[!!] Failed to fetch binaries${RESET}"
+        fi
+    else
+        echo -e "${YELLOW}[!!] Failed to install camoufox${RESET}"
+    fi
+fi
+
 # ── Verify Installation ────────────────────────────────────────────────────────
 echo -e "${BLUE}[*] Verifying installation...${RESET}"
 
