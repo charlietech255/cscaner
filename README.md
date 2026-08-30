@@ -30,9 +30,22 @@ Use it only against systems you own or systems for which you have explicit permi
 
 ## Installation
 
-### Linux and Hosted Servers
+### Recommended desktop/server setup (best for full features)
 
-Supported on Debian, Ubuntu, Kali, Fedora, and similar systems.
+For the full scanner, including Cloudflare browser bypass, browser-based JS inspection, and advanced WAF behavior, use a desktop Linux environment or WSL. This is the recommended setup for best results.
+
+```bash
+git clone https://github.com/charlietech255/cscaner.git
+cd cscaner
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip setuptools wheel
+python3 -m pip install -r requirements.txt
+python3 -m camoufox fetch
+python3 cscan.py --list-modules
+```
+
+If you prefer the installer script instead of manual setup:
 
 ```bash
 git clone https://github.com/charlietech255/cscaner.git
@@ -43,33 +56,28 @@ chmod +x install.sh fetch_wordlists.sh
 python3 cscan.py --list-modules
 ```
 
-The installer uses a virtual environment on Kali when needed. For a manual installation:
+### Linux and Hosted Servers
+
+Supported on Debian, Ubuntu, Kali, Fedora, and similar systems.
 
 ```bash
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip nmap git curl
+
+git clone https://github.com/charlietech255/cscaner.git
+cd cscaner
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
-```
-
-Optional browser support on compatible desktop/server architectures:
-
-```bash
-python3 -m pip install "camoufox[geoip]"
 python3 -m camoufox fetch
-```
-
-Optional system tools:
-
-```bash
-# Debian, Ubuntu, or Kali
-sudo apt update
-sudo apt install -y nmap
+./fetch_wordlists.sh
+python3 cscan.py --list-modules
 ```
 
 ### Windows
 
-Native Windows supports the core Python scanner. WSL is recommended when you need Linux tools such as nmap or shell scripts.
+Native Windows supports the core Python scanner. WSL is recommended when you need the full browser and nmap features.
 
 ```powershell
 git clone https://github.com/charlietech255/cscaner.git
@@ -78,16 +86,15 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 py -m pip install --upgrade pip
 py -m pip install -r requirements.txt
+py -m camoufox fetch
 py cscan.py --list-modules
 ```
 
-Use Git Bash or WSL to run `fetch_wordlists.sh`. In WSL, follow the Linux instructions.
+Use Git Bash or WSL to run `fetch_wordlists.sh`.
 
 ### Termux on Android
 
-Install Termux from [F-Droid](https://f-droid.org/packages/com.termux/) or the official [Termux GitHub releases](https://github.com/termux/termux-app/releases). The old Play Store build is not recommended.
-
-Termux uses a separate dependency file. Do not install the desktop `requirements.txt` on Android.
+Use this only for the lightweight mobile profile. Do not install the desktop requirements on Android.
 
 ```bash
 pkg update && pkg upgrade -y
@@ -101,14 +108,118 @@ chmod +x fetch_wordlists.sh
 python3 cscan.py --list-modules
 ```
 
-Or use the automatic installer, which detects Termux and selects the correct profile:
+Or use the automatic installer:
 
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
 
-Termux supports the core DNS, web, crawler, API, TLS, OSINT, stealth, and reporting workflows. Camoufox/Playwright browser features and Paramiko SSH auditing are excluded because their Android dependencies are not reliable. Optional nmap support can be installed with `pkg install nmap`; it is not required for the core scanner.
+Termux supports the core DNS, web, crawler, API, TLS, OSINT, stealth, and reporting workflows. Camoufox/Playwright browser features and Paramiko SSH auditing are excluded because their Android dependencies are not reliable.
+
+## Proper usage workflow
+
+Follow these steps in order for the best results.
+
+### 1) Prepare the environment
+
+```bash
+cd cscaner
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip setuptools wheel
+python3 -m pip install -r requirements.txt
+python3 -m camoufox fetch
+./fetch_wordlists.sh
+```
+
+This ensures the scanner, browser engine, and wordlists are ready before you scan anything.
+
+### 2) Start with a quick reconnaissance pass
+
+Use the simplest checks first.
+
+```bash
+python3 cscan.py --target https://example.com --module dns
+python3 cscan.py --target https://example.com --module web
+python3 cscan.py --target https://example.com --module ports
+```
+
+This gives you host, network, and basic web exposure information before deeper checks.
+
+### 3) Run the auto mode on the target
+
+This is the best general-purpose starting point for a real target.
+
+```bash
+python3 cscan.py --target https://example.com --module auto
+```
+
+The `auto` workflow will:
+- detect WAF signals
+- enable stealth mode
+- escalate timing and jitter when needed
+- attempt Cloudflare bypass if Camoufox is available
+- run the main web and reconnaissance checks in a safer sequence
+
+### 4) Use interactive mode for guided scanning
+
+If you want step-by-step manual control:
+
+```bash
+python3 cscan.py
+```
+
+Then:
+- select the target
+- choose the module
+- enable stealth if needed
+- run the scan
+- export the report from the menu
+
+### 5) Move to deeper checks only after recon confirms a target is valid
+
+Once the target looks reachable and relevant, proceed to deeper modules:
+
+```bash
+python3 cscan.py --target https://example.com --module crawl
+python3 cscan.py --target https://example.com --module ssl
+python3 cscan.py --target https://example.com --module api
+```
+
+Use the more aggressive modules only when you have explicit authorization and a clear reason to test them.
+
+### 6) If Cloudflare blocks the target, use the browser bypass workflow
+
+This is the expected sequence for Cloudflare-protected sites:
+
+```bash
+python3 cscan.py
+```
+
+Then in the menu:
+- choose the target
+- open the Cloudflare bypass option
+- allow the browser to solve the challenge
+- inject the solved `cf_clearance` cookie into the session
+- continue with the normal scan flow
+
+The browser path is only effective when Camoufox is installed and the challenge is solvable.
+
+### 7) Export and review results
+
+Always save and review reports before moving to further testing:
+
+```bash
+ls reports/
+```
+
+Check the generated JSON and text reports for:
+- confirmed findings
+- risky paths and headers
+- WAF bypass status
+- session/Cookie handling
+- scan coverage and next steps
 
 ## Usage
 

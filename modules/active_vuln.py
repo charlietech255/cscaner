@@ -341,6 +341,40 @@ def _test_sqli_form(form: dict, cookies: dict = None) -> list:
     return findings
 
 
+def scan_sqli_target(target: str, form: dict | None = None, cookies: dict | None = None) -> dict:
+    """Direct SQLi scanner for a URL or form payload.
+
+    Accepts either:
+      - a raw URL such as https://example.com/search?q=test
+      - a form dict with action, method, and parameter names
+      - any injectable target passed in as a dict/string
+    """
+    if not target:
+        return {'target': None, 'findings': [], 'status': 'no_target'}
+
+    if isinstance(target, dict):
+        form = target
+        target = form.get('action') or form.get('url') or 'https://example.com'
+
+    if form:
+        findings = _test_sqli_form(form, cookies=cookies)
+        return {'target': target, 'findings': findings, 'status': 'ok' if findings else 'no_findings'}
+
+    parsed = urllib.parse.urlparse(target)
+    if not parsed.scheme:
+        target = _build_url(target)
+
+    params = []
+    if parsed.query:
+        params = list(urllib.parse.parse_qs(parsed.query, keep_blank_values=True).keys())
+
+    if not params:
+        params = FALLBACK_PARAMS[:15]
+
+    findings = _test_sqli(target, params, cookies=cookies)
+    return {'target': target, 'findings': findings, 'status': 'ok' if findings else 'no_findings'}
+
+
 # ── Open Redirect ─────────────────────────────────────────────────────────────
 REDIRECT_PAYLOADS = [
     'https://evil.com', '//evil.com', '/\\evil.com',

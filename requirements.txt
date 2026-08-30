@@ -14,7 +14,7 @@ psycopg2-binary
 # crypto_utils.py uses Python stdlib (hashlib, hmac, base64) only
 # This keeps CSCAN lightweight and Termux-compatible
 
-# Optional: Advanced Browser Engine (Cloudflare WAF bypass, JS rendering, etc)
-# Requires a Playwright-compatible platform (not Termux)
-# camoufox[geoip]
+# Advanced Browser Engine for Cloudflare WAF bypass, JS rendering, and browser-based checks
+# Requires a Playwright-compatible desktop/server environment (not Termux)
+camoufox[geoip]
 # After install run: python -m camoufox fetch

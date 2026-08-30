@@ -23,6 +23,15 @@ DEFAULT_PORT = 8081
 DEFAULT_HOST = "127.0.0.1"
 STATE_FILE = Path(__file__).resolve().parents[1] / "api_emulator_state.json"
 
+API_ROUTE_CATALOG = [
+    {"path": "/health", "methods": ["GET"], "auth_required": False, "summary": "health check"},
+    {"path": "/auth/login", "methods": ["POST"], "auth_required": False, "summary": "issue bearer token"},
+    {"path": "/api/v1/metrics", "methods": ["GET"], "auth_required": True, "summary": "service metrics"},
+    {"path": "/api/v1/users", "methods": ["GET", "POST"], "auth_required": True, "summary": "list and create users"},
+    {"path": "/api/v1/users/{id}", "methods": ["GET", "PUT", "DELETE"], "auth_required": True, "summary": "read, update, or delete a user"},
+    {"path": "/api/v1/endpoints", "methods": ["GET"], "auth_required": True, "summary": "list all available API endpoints"},
+]
+
 
 class ApiEmulatorState:
     def __init__(self, state_file: str | Path = STATE_FILE):
@@ -90,6 +99,9 @@ class ApiEmulatorState:
         start = (page - 1) * limit
         end = start + limit
         return self.users[start:end]
+
+    def list_routes(self):
+        return [dict(route) for route in API_ROUTE_CATALOG]
 
     def get_user(self, user_id):
         for user in self.users:
@@ -202,6 +214,14 @@ class ApiEmulatorHandler(BaseHTTPRequestHandler):
                 self.send_json(HTTPStatus.UNAUTHORIZED, {"error": "invalid or missing token"})
                 return
             self.send_json(HTTPStatus.OK, {"total_users": len(self.state.users), "active_tokens": len(self.state.tokens)})
+            return
+
+        if self.command == "GET" and path == "/api/v1/endpoints":
+            token = self.get_bearer_token()
+            if not self.state.require_token(token):
+                self.send_json(HTTPStatus.UNAUTHORIZED, {"error": "invalid or missing token"})
+                return
+            self.send_json(HTTPStatus.OK, {"items": self.state.list_routes(), "total": len(API_ROUTE_CATALOG)})
             return
 
         if self.command == "GET" and path == "/api/v1/users":
@@ -362,6 +382,15 @@ def scan_api_contract(
     else:
         findings.append({"route": "/api/v1/metrics", "status": metrics_status, "result": metrics_payload})
 
+    endpoints_status, endpoints_payload = request_json("GET", "/api/v1/endpoints", token_value=effective_token)
+    if endpoints_status == 200:
+        route_items = endpoints_payload.get("items", [])
+        findings.append({"route": "/api/v1/endpoints", "status": endpoints_status, "result": f"{len(route_items)} endpoints listed"})
+        routes = route_items
+    else:
+        findings.append({"route": "/api/v1/endpoints", "status": endpoints_status, "result": endpoints_payload})
+        routes = []
+
     users_status, users_payload = request_json("GET", f"{user_route}?page=1&limit=5", token_value=effective_token)
     if users_status == 200:
         findings.append({"route": user_route, "status": users_status, "result": f"{len(users_payload.get('items', []))} users returned"})
@@ -391,6 +420,7 @@ def scan_api_contract(
         "base_url": base_url,
         "contract_ok": all(item["status"] in (200, 201, 204) for item in findings if "status" in item and item["status"] != 0),
         "findings": findings,
+        "routes": routes,
         "token_issued": bool(effective_token),
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }

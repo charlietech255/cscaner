@@ -22,6 +22,7 @@ SUPPORTED_MODULES = {
     "crawl": "Crawler-based endpoint discovery",
     "ssl": "TLS and certificate inspection",
     "ports": "Common-port and full-port discovery",
+    "nuclei": "Fast template-based vulnerability checks with Nuclei",
     "auto": "Default end-to-end scan pipeline"
 }
 
@@ -97,7 +98,7 @@ from modules.browser_engine import (
     menu_js_secrets
 )
 # ── New v2.2 modules ──────────────────────────────────────────────────────────
-from modules.active_vuln  import active_vuln_scan
+from modules.active_vuln  import active_vuln_scan, scan_sqli_target
 from modules.active_vuln  import set_stealth_session as activevuln_set_stealth
 from modules.active_vuln  import set_auth_header as activevuln_set_auth_header
 from modules.nvd_cve      import live_cve_mapping, menu_nvd_lookup
@@ -113,6 +114,8 @@ from modules.crawler      import set_insecure_ssl as crawler_set_insecure_ssl
 from modules.path_api_enum import enumerate_api
 from modules.path_api_enum import set_stealth_session as apienum_set_stealth
 from modules.path_api_enum import set_insecure_ssl as apienum_set_insecure_ssl
+from modules.mobile_api_enum import enumerate_mobile_api_endpoints
+from modules.nuclei import run_nuclei_scan, nuclei_available, install_nuclei_instructions
 from modules.utils import normalize_target
 
 # ── Session state ─────────────────────────────────────────────────────────────
@@ -692,6 +695,30 @@ async def handle_api_enum():
     pause()
 
 
+async def handle_mobile_api_enum():
+    """Lightweight API enumeration aimed at mobile and constrained environments."""
+    t = get_target()
+    if not t:
+        return
+
+    wl = None
+    bundled = os.path.join(os.path.dirname(__file__), 'wordlists', 'api_paths.txt')
+    if os.path.isfile(bundled):
+        with open(bundled) as f:
+            wl = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+
+    res = await _run_sync(
+        enumerate_mobile_api_endpoints,
+        t,
+        SESSION['use_ssl'],
+        wordlist=wl,
+        probe=True,
+        timeout=6.0,
+    )
+    SESSION['results']['mobile_api_enum'] = res
+    pause()
+
+
 def _probe_waf(target: str) -> list:
     """
     Send a suspicious GET request to the target and check response headers/body
@@ -841,6 +868,76 @@ def _auto_waf_evasion(target: str) -> dict:
 #  FULL AUTO PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def _build_auto_scan_steps(target: str, workers: int, use_ssl: bool,
+                          cookies=None, auth_header=None,
+                          wafs_found=None, mutate: bool = False,
+                          timing: str = 'normal', try_nmap: bool = False,
+                          ssh_delay: float = 0.0):
+    """Return an ordered list of auto-scan steps used by section 17."""
+    wafs_found = wafs_found or []
+    effective_mutate = mutate or bool(wafs_found)
+    steps = [
+        ("DNS Lookup", _run_sync, (dns_lookup, target)),
+        ("WHOIS Intelligence", _run_sync, (whois_lookup, target)),
+        ("GeoIP Location", _run_sync, (geoip_lookup, target)),
+        ("Port Scan (Common)", _run_sync, (port_scan_common, target, timing, try_nmap)),
+        ("SSL Certificate", _run_sync, (ssl_inspect, target, 443)),
+        ("API Enumeration", _run_sync, (enumerate_mobile_api_endpoints, target, use_ssl, None, True, 6.0, False)),
+        ("Web Crawl", _run_sync, (crawl_target, target, use_ssl, 3, 50, cookies, auth_header)),
+        ("HTTP Header Audit", _run_sync, (http_header_audit, target, use_ssl)),
+        ("SQLi Smoke", _run_sync, (scan_sqli_target, target, None, cookies)),
+        ("Web Vuln Scan", _run_sync, (web_vuln_scan, target, use_ssl, effective_mutate, workers)),
+    ]
+
+    if 'paramiko' not in unavailable_optional:
+        steps.append(("SSH Audit", _run_sync, (ssh_audit, target, 22, None, ssh_delay, SESSION['credential_testing'])))
+
+    if _CAMOUFOX_AVAILABLE:
+        from modules.browser_engine import _build_cfg, browser_js_render, browser_scan_js_secrets
+
+        def _auto_js_render():
+            cfg = _build_cfg(SESSION)
+            data = browser_js_render(cfg)
+            from modules.browser_engine import display_js_render
+            if data:
+                display_js_render(data)
+            return data
+
+        def _auto_js_secrets():
+            cfg = _build_cfg(SESSION)
+            data = browser_scan_js_secrets(cfg)
+            from modules.browser_engine import display_js_secrets
+            if data:
+                display_js_secrets(data)
+            return data
+
+        steps.append(("SPA & JS Render", _run_sync, (_auto_js_render,)))
+        steps.append(("JS Secrets Scan", _run_sync, (_auto_js_secrets,)))
+
+    # Renumber labels dynamically since length varies
+    numbered = []
+    for idx, step in enumerate(steps, start=1):
+        label, fn, args = step
+        numbered.append((f"{idx}/{len(steps)+1}  {label}", fn, args))
+    return numbered
+
+
+async def handle_nuclei_scan():
+    """Run Nuclei template scan for the current target."""
+    t = get_target()
+    if not t:
+        return
+    if not nuclei_available():
+        alert("Nuclei is not installed or not on PATH.")
+        print(install_nuclei_instructions())
+        pause()
+        return
+    res = await _run_sync(run_nuclei_scan, t)
+    SESSION['results']['nuclei'] = res
+    pause()
+
+
 async def handle_auto_scan():
     section(T("auto_title"))
     t = get_target(force=True)
@@ -877,51 +974,20 @@ async def handle_auto_scan():
         info(f"Worker threads capped at {BR}{Y}{workers}{RS} to stay under WAF rate limits.")
 
     # ── Pipeline steps ─────────────────────────────────────────────────────────
-    # Web steps use mutate=True whenever WAF is detected (even if user didn't set it)
-    effective_mutate = mutate or bool(wafs_found)
-
     cookies = SESSION['auth'].get('cookies') or None
     auth_header = SESSION['auth'].get('header') or None
-
-    steps = [
-        ("DNS Lookup",         _run_sync, (dns_lookup, t)),
-        ("WHOIS Intelligence", _run_sync, (whois_lookup, t)),
-        ("GeoIP Location",     _run_sync, (geoip_lookup, t)),
-        ("Port Scan (Common)", _run_sync, (port_scan_common, t, timing, try_nmap)),
-        ("SSL Certificate",    _run_sync, (ssl_inspect, t, 443)),
-        ("Web Crawl",          _run_sync, (crawl_target, t, SESSION['use_ssl'], 3, 50, cookies, auth_header)),
-        ("Web Vuln Scan",      _run_sync, (web_vuln_scan, t, SESSION['use_ssl'], effective_mutate, workers)),
-        ("HTTP Header Audit",  _run_sync, (http_header_audit, t, SESSION['use_ssl'])),
-    ]
-
-    if 'paramiko' not in unavailable_optional:
-        steps.append(("SSH Audit", _run_sync, (ssh_audit, t, 22, None, ssh_delay,
-                            SESSION['credential_testing'])))
-
-    # ── Advanced SPA / JS Scanning ─────────────────────────────────────────────
-    if _CAMOUFOX_AVAILABLE:
-        from modules.browser_engine import _build_cfg, browser_js_render, browser_scan_js_secrets
-        
-        def _auto_js_render():
-            cfg = _build_cfg(SESSION)
-            data = browser_js_render(cfg)
-            from modules.browser_engine import display_js_render
-            if data: display_js_render(data)
-            return data
-            
-        def _auto_js_secrets():
-            cfg = _build_cfg(SESSION)
-            data = browser_scan_js_secrets(cfg)
-            from modules.browser_engine import display_js_secrets
-            if data: display_js_secrets(data)
-            return data
-            
-        steps.append(("SPA & JS Render", _run_sync, (_auto_js_render,)))
-        steps.append(("JS Secrets Scan", _run_sync, (_auto_js_secrets,)))
-
-    # Renumber labels dynamically since length varies
-    for idx, step in enumerate(steps):
-        steps[idx] = (f"{idx+1}/{len(steps)+1}  {step[0]}", step[1], step[2])
+    steps = _build_auto_scan_steps(
+        target=t,
+        workers=workers,
+        use_ssl=SESSION['use_ssl'],
+        cookies=cookies,
+        auth_header=auth_header,
+        wafs_found=wafs_found,
+        mutate=mutate,
+        timing=timing,
+        try_nmap=try_nmap,
+        ssh_delay=ssh_delay,
+    )
 
     all_results = {}
     for step in steps:
@@ -1574,6 +1640,8 @@ HANDLERS = {
     '43': handle_auth_config,
     # ── v3.1 — Path/API Enumerator ───────────────────────────────────────────
     '44': handle_api_enum,
+    '45': handle_mobile_api_enum,
+    '46': handle_nuclei_scan,
     # Navigation
     't':  set_target,
     'T':  set_target,
@@ -1622,6 +1690,7 @@ async def interactive_mode():
         show_banner()
         show_status()
         show_menu()
+        show_footer()
         choice = prompt_choice(T("prompt_select"))
         if choice == '0':
             sys.exit(0)
@@ -1631,7 +1700,6 @@ async def interactive_mode():
             show_banner()
             show_status()
             try:
-                # FIX #8: Use inspect.iscoroutinefunction (asyncio's version is deprecated since 3.12)
                 if inspect.iscoroutinefunction(handler):
                     await handler()
                 else:
@@ -1660,7 +1728,7 @@ def build_parser():
     parser.add_argument("--insecure", action="store_true", help="Allow insecure SSL certificates")
     parser.add_argument(
         "--credential-testing", action="store_true",
-        help="Enable authorized credential guessing for SSH, HTTP Basic Auth, and databases",
+        help="Enable credential guessing only for targets you own or for which you have explicit written authorization",
     )
     parser.add_argument("--list-modules", action="store_true", help="List supported non-interactive modules")
     return parser
@@ -1700,6 +1768,8 @@ async def main():
             await handle_ssl()
         elif mod == "ports":
             await handle_port_common()
+        elif mod == "nuclei":
+            await handle_nuclei_scan()
         else:
             await handle_auto_scan()
     else:

@@ -1,3 +1,4 @@
+import os
 import socket
 import threading
 import time
@@ -74,6 +75,22 @@ class CliParserTests(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["--list-modules"])
         self.assertTrue(args.list_modules)
+
+    def test_supported_modules_include_nuclei_template_scan(self):
+        self.assertIn("nuclei", SUPPORTED_MODULES)
+
+    def test_direct_sqli_scan_accepts_url_or_form_payload(self):
+        from modules.active_vuln import scan_sqli_target
+
+        result = scan_sqli_target("https://example.com/search?q=test")
+        self.assertIn("findings", result)
+        self.assertIn("target", result)
+
+    def test_requirements_include_camoufox_for_cloudflare_bypass(self):
+        requirements_path = __file__.rsplit("/tests", 1)[0] + "/requirements.txt"
+        with open(requirements_path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+        self.assertIn("camoufox[geoip]", text)
 
     def test_ground_truth_summary_contains_only_observed_evidence(self):
         results = {
@@ -157,6 +174,62 @@ class CliParserTests(unittest.TestCase):
                 os.remove("/tmp/cscan_api_emulator_test_state.json")
             except FileNotFoundError:
                 pass
+
+    def test_api_emulator_lists_all_routes(self):
+        server = ApiEmulatorServer(("127.0.0.1", 0), state_file="/tmp/cscan_api_emulator_routes_state.json")
+        port = server.server_port
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(0.2)
+                try:
+                    sock.connect(("127.0.0.1", port))
+                    break
+                except OSError:
+                    time.sleep(0.1)
+        else:
+            server.shutdown()
+            server.server_close()
+            self.fail("live emulator server did not start in time")
+
+        try:
+            result = scan_api_contract(
+                f"http://127.0.0.1:{port}",
+                username="alice",
+                password="secret",
+            )
+            self.assertIn("routes", result)
+            self.assertTrue(any(route.get("path") == "/api/v1/endpoints" for route in result["routes"]))
+        finally:
+            server.shutdown()
+            server.server_close()
+            try:
+                os.remove("/tmp/cscan_api_emulator_routes_state.json")
+            except FileNotFoundError:
+                pass
+
+    def test_termux_mobile_api_enum_returns_candidate_endpoints(self):
+        from modules.mobile_api_enum import enumerate_mobile_api_endpoints
+
+        result = enumerate_mobile_api_endpoints(
+            "https://example.com",
+            wordlist=["/api", "/api/v1", "/health"],
+            probe=False,
+        )
+        self.assertIn("target", result)
+        self.assertIn("endpoints", result)
+        self.assertTrue(any(item["path"] == "/api" for item in result["endpoints"]))
+
+    def test_auto_scan_pipeline_adds_api_and_sqli_steps(self):
+        from cscan import _build_auto_scan_steps
+
+        steps = _build_auto_scan_steps("https://example.com", 10, False, None, None, False)
+        labels = [label for label, _, _ in steps]
+        self.assertTrue(any("API Enumeration" in label for label in labels))
+        self.assertTrue(any("SQLi Smoke" in label for label in labels))
 
     def test_scan_api_contract_accepts_hosted_url_and_token(self):
         result = scan_api_contract(

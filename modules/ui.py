@@ -37,12 +37,40 @@ DM = Style.DIM
 RS = Style.RESET_ALL
 
 # ── Print helpers ──────────────────────────────────────────────────────────────
-def ok(msg):       print(f"  {BR}{G}[+]{RS} {msg}")
-def warn(msg):     print(f"  {BR}{Y}[!]{RS} {msg}")
-def alert(msg):    print(f"  {BR}{R}[x]{RS} {msg}")
-def info(msg):     print(f"  {BR}{C}[>]{RS} {msg}")
-def critical(msg): print(f"\n  {BR}{Back.RED}{W} CRITICAL {RS} {BR}{R}{msg}{RS}")
-def bold(msg):     print(f"  {BR}{W}{msg}{RS}")
+def ok(msg):
+    print(f"  {BR}{G}[OK]{RS} {msg}")
+
+def warn(msg):
+    print(f"  {BR}{Y}[WARN]{RS} {msg}")
+
+def alert(msg):
+    print(f"  {BR}{R}[FAIL]{RS} {msg}")
+
+def info(msg):
+    print(f"  {BR}{C}[INFO]{RS} {msg}")
+
+def critical(msg):
+    print(f"\n  {BR}{Back.RED}{W} CRITICAL {RS} {BR}{R}{msg}{RS}")
+
+def bold(msg):
+    print(f"  {BR}{W}{msg}{RS}")
+
+
+def status_progress(msg: str):
+    print(f"  {BR}{C}[PROGRESS]{RS} {msg}")
+
+
+def status_success(msg: str):
+    print(f"  {BR}{G}[SUCCESS]{RS} {msg}")
+
+
+def status_failure(msg: str):
+    print(f"  {BR}{R}[FAILURE]{RS} {msg}")
+
+
+def status_retry(msg: str):
+    print(f"  {BR}{Y}[RETRY]{RS} {msg}")
+
 
 def section(title: str):
     bar = f"{BR}{C}{'─' * 45}{RS}"
@@ -50,8 +78,13 @@ def section(title: str):
     print(f"  {BR}{M}{title}{RS}")
     print(bar)
 
+
 def divider():
     print(f"  {DM}{C}{'·' * 45}{RS}")
+
+
+def show_footer():
+    print(f"\n  {DM}Tool made by Charlie{RS}")
 
 # ── Wide-character helper (emoji, CJK) ────────────────────────────────────────
 def _wide(s: str) -> int:
@@ -62,55 +95,51 @@ def _wide(s: str) -> int:
 def _build_banner() -> str:
     subtitle = T("banner_subtitle")
     return f"""
-{BR}{C}  ▗▄▄▖ ▗▄▄▖ ▗▄▄▖ ▗▄▖ ▗▖  ▗▖
-  ▐▌ ▐▌▐▌   ▐▌   ▐▌ ▐▌▐▛▚▖▐▌
-  ▐▌   ▝▀▚▖ ▐▌   ▐▛▀▜▌▐▌ ▝▜▌
-  ▝▚▄▄▖▗▄▄▞▘▝▚▄▄▖▐▌ ▐▌▐▌  ▐▌{RS}
-  
-  {BR}{W}CSCAN{RS} {DM}—{RS} {subtitle}
+{BR}{C}  CSCAN{RS}
+  {BR}{W}{subtitle}{RS}
   {DM}{'─'*55}{RS}
+  {DM}Tool made by Charlie{RS}
 """
 
-# ── Modern Flat Menu Layout ──────────────────────────────────────────────────
+# ── Plain text menu layout ───────────────────────────────────────────────────
 def _build_menu() -> str:
-    # Use dynamic padding for translations
     return f"""
-{BR}{C}  ● RECONNAISSANCE & NETWORK{RS}
+{BR}{C}  RECONNAISSANCE & NETWORK{RS}
     {G}[01]{RS} {T("sm1"):<22} {G}[06]{RS} {T("sm6")}
     {G}[02]{RS} {T("sm2"):<22} {G}[07]{RS} {T("sm7")}
     {G}[03]{RS} {T("sm3"):<22} {G}[08]{RS} {T("sm8")}
     {G}[04]{RS} {T("sm4"):<22} {G}[09]{RS} {T("sm9")}
     {G}[05]{RS} {T("sm5"):<22}
 
-{BR}{C}  ● WEB & EXPLOITATION{RS}
+{BR}{C}  WEB & EXPLOITATION{RS}
     {Y}[10]{RS} {T("sm10"):<22} {Y}[14]{RS} {T("sm14")}
     {Y}[11]{RS} {T("sm11"):<22} {Y}[15]{RS} {T("sm15")}
     {Y}[12]{RS} {T("sm12"):<22} {Y}[16]{RS} {T("sm16")}
     {Y}[13]{RS} {T("sm13"):<22}
 
-{BR}{C}  ● AUTOMATION & AI{RS}
+{BR}{C}  AUTOMATION & AI{RS}
     {M}[17]{RS} {T("sm17"):<22} {M}[20]{RS} {T("sm20")}
     {M}[18]{RS} {T("sm18"):<22} {M}[21]{RS} {T("sm21")}
     {M}[19]{RS} {T("sm19"):<22} {M}[22]{RS} {T("sm22")}
                               {M}[23]{RS} {T("sm23")}
 
-{BR}{C}  ● STEALTH & ADVANCED OPSEC{RS}
+{BR}{C}  STEALTH & ADVANCED OPSEC{RS}
     {B}[24]{RS} {T("sm24"):<22} {B}[26]{RS} CF WAF Bypass (solve)
     {B}[25]{RS} {T("sm25"):<22} {B}[27]{RS} CF Bypass + Inject Session
 
-{BR}{C}  ● ADVANCED BROWSER ENGINE{RS}
+{BR}{C}  ADVANCED BROWSER ENGINE{RS}
     {C}[28]{RS} JS-Rendered Page       {C}[32]{RS} Browser Fingerprint
     {C}[29]{RS} Network Traffic        {C}[33]{RS} Cookie Harvester
     {C}[30]{RS} Form Login Tester      {C}[34]{RS} JS Secret Scanner
     {C}[31]{RS} Screenshot Recon
 
-{BR}{C}  ● v2.2 — ACTIVE EXPLOITATION{RS}
+{BR}{C}  ACTIVE EXPLOITATION{RS}
     {R}[35]{RS} Active Vuln Scan (XSS/SQLi/SSRF)
     {R}[36]{RS} Live CVE Map (NVD API)    {R}[38]{RS} UDP Scanner (SNMP/TFTP/NTP)
     {R}[37]{RS} NVD Manual CVE Lookup     {R}[39]{RS} Deep SSL/TLS Audit
     {R}[40]{RS} OSINT Passive Recon       {R}[41]{RS} Service Brute (MySQL/Redis/RDP)
 
-{BR}{C}  ● v3.0 — CRAWLER & AUTH{RS}
+{BR}{C}  CRAWLER & AUTH{RS}
     {M}[42]{RS} Web Crawler (Discovery)   {M}[43]{RS} Auth / Session Config
     {M}[44]{RS} Path/API Enumerator
 

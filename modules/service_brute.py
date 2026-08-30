@@ -41,11 +41,20 @@ def _resolve(target: str) -> str:
 
 
 # ── MySQL brute force ─────────────────────────────────────────────────────────
+def _guard_service_credential_testing(enabled: bool, service: str) -> bool:
+    """Keep credential attacks behind an explicit, authorized-only gate."""
+    if enabled:
+        return True
+    warn(f"{service} credential testing is disabled by default.")
+    info("Enable it only for targets you own or for which you have explicit written authorization.")
+    info("Use --credential-testing in the CLI or set enable_credential_testing=True in code.")
+    return False
+
+
 def mysql_brute(target: str, port: int = 3306, custom_creds: list = None,
                 enable_credential_testing: bool = False) -> dict:
     section("MYSQL CREDENTIAL AUDIT")
-    if not enable_credential_testing:
-        warn("MySQL credential testing is disabled by default.")
+    if not _guard_service_credential_testing(enable_credential_testing, "MySQL"):
         return {'skipped': True, 'reason': 'credential testing not explicitly enabled'}
     ip = _resolve(target)
     if not ip:
@@ -108,8 +117,7 @@ def mysql_brute(target: str, port: int = 3306, custom_creds: list = None,
 def pgsql_brute(target: str, port: int = 5432, custom_creds: list = None,
                 enable_credential_testing: bool = False) -> dict:
     section("POSTGRESQL CREDENTIAL AUDIT")
-    if not enable_credential_testing:
-        warn("PostgreSQL credential testing is disabled by default.")
+    if not _guard_service_credential_testing(enable_credential_testing, "PostgreSQL"):
         return {'skipped': True, 'reason': 'credential testing not explicitly enabled'}
     ip = _resolve(target)
     if not ip:

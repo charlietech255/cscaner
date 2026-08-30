@@ -105,7 +105,7 @@ for pkg in $PACKAGES; do
     fi
 done
 
-# Install WAF Bypass (Camoufox) on non-Termux systems
+# Install WAF Bypass (Camoufox) and template scanner (Nuclei) on non-Termux systems
 if [ $IS_TERMUX -eq 0 ]; then
     echo ""
     echo -e "${BLUE}[*] Installing Advanced WAF Bypass Engine (Camoufox)...${RESET}"
@@ -120,6 +120,33 @@ if [ $IS_TERMUX -eq 0 ]; then
     else
         echo -e "${YELLOW}[!!] Failed to install camoufox${RESET}"
     fi
+
+    echo ""
+    echo -e "${BLUE}[*] Installing Nuclei template scanner if needed...${RESET}"
+    if command -v nuclei >/dev/null 2>&1; then
+        echo -e "  ${GREEN}[OK]${RESET} nuclei is already installed"
+    else
+        if command -v go >/dev/null 2>&1; then
+            export PATH="$HOME/go/bin:$PATH"
+            echo -ne "  Installing nuclei via Go... "
+            if GOBIN="/usr/local/bin" go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest >/dev/null 2>&1; then
+                echo -e "${GREEN}[OK]${RESET}"
+                if [ -x "/usr/local/bin/nuclei" ]; then
+                    echo -e "  ${GREEN}[OK]${RESET} nuclei available at /usr/local/bin/nuclei"
+                fi
+            else
+                echo -e "${YELLOW}[!!] Go install failed${RESET}"
+                echo -e "  ${YELLOW}[!] Try: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest${RESET}"
+            fi
+        else
+            echo -e "${YELLOW}[!!] Go is not installed — nuclei install skipped${RESET}"
+            echo -e "  ${YELLOW}[!] Install Go first, then run: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest${RESET}"
+        fi
+    fi
+else
+    echo ""
+    echo -e "${YELLOW}[!] Termux detected: browser-based modules and Nuclei are not reliably supported here.${RESET}"
+    echo -e "${YELLOW}[!] CSCAN will keep the core mobile-safe toolkit, but advanced browser/WAF features require Linux/WSL/Desktop.${RESET}"
 fi
 
 # ── Verify Installation ────────────────────────────────────────────────────────
