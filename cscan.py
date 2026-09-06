@@ -23,6 +23,7 @@ SUPPORTED_MODULES = {
     "ssl": "TLS and certificate inspection",
     "ports": "Common-port and full-port discovery",
     "nuclei": "Fast template-based vulnerability checks with Nuclei",
+    "osint-origin": "Find real server IP behind Cloudflare/WAF (passive OSINT)",
     "auto": "Default end-to-end scan pipeline"
 }
 
@@ -117,6 +118,7 @@ from modules.path_api_enum import set_insecure_ssl as apienum_set_insecure_ssl
 from modules.mobile_api_enum import enumerate_mobile_api_endpoints
 from modules.nuclei import run_nuclei_scan, nuclei_available, install_nuclei_instructions
 from modules.utils import normalize_target
+from modules.osnit_origin_ip import find_origin_ip
 
 # ── Session state ─────────────────────────────────────────────────────────────
 SESSION = {
@@ -128,6 +130,7 @@ SESSION = {
     'start_time':  None,
     'gemini_key':  None,   # Gemini API key (stored in-memory only)
     'credential_testing': False,
+    'interactive':       False,   # True only in menu-driven interactive mode
     'auth': {
         'cookies':     {},     # dict of cookie name→value for authenticated scanning
         'header':      None,   # Authorization header value (e.g. 'Bearer xxx')
@@ -198,7 +201,7 @@ def cls():
 
 def get_target(force: bool = False) -> str:
     """Return current target or prompt for one."""
-    if SESSION['target'] and not force:
+    if SESSION['target'] and (not force or not SESSION.get('interactive')):
         return SESSION['target']
     print()
     t = prompt_target(T("prompt_target"))
@@ -293,7 +296,15 @@ def show_status():
         secs = int(time.time() - SESSION['start_time'])
         dur  = f"   {BR}{W}TIME:{RS} {secs}s"
 
-    print(f"\n  {BR}{W}TARGET:{RS} {C}{t}{RS}   {BR}{W}IP:{RS} {ip}   {BR}{W}PROTO:{RS} {ssl}   {BR}{W}STEALTH:{RS} {st}   {BR}{W}AI:{RS} {ai}{dur}")
+    # Show origin IP in status if found
+    origin_display = ""
+    if 'origin_ip' in SESSION['results']:
+        origin_res = SESSION['results']['origin_ip']
+        if origin_res and hasattr(origin_res, 'confirmed') and origin_res.confirmed():
+            real_ip = origin_res.confirmed()[0].ip
+            origin_display = f"   {BR}{R}REAL IP:{RS} {real_ip}"
+
+    print(f"\n  {BR}{W}TARGET:{RS} {C}{t}{RS}   {BR}{W}IP:{RS} {ip}{origin_display}   {BR}{W}PROTO:{RS} {ssl}   {BR}{W}STEALTH:{RS} {st}   {BR}{W}AI:{RS} {ai}{dur}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -989,7 +1000,12 @@ async def handle_auto_scan():
         ssh_delay=ssh_delay,
     )
 
+    # ── If Cloudflare detected, add origin IP discovery step ───────────────────
+    if 'cloudflare' in wafs_found:
+        steps.insert(0, ("Origin IP Discovery (OSINT)", _run_sync, (find_origin_ip, t, None)))
+
     all_results = {}
+    effective_mutate = mutate or bool(wafs_found)
     for step in steps:
         label, fn, args = step[0], step[1], step[2]
         print(f"\n  {BR}{C}┌── {label} {DM}{'─' * (45 - len(label))} ─►{RS}")
@@ -1145,6 +1161,27 @@ def _print_auto_summary(target, results, elapsed, wafs_found=None, cf_bypassed=F
         else:
             ok("CVE Mapping: No known CVEs matched.")
 
+    # Origin IP Discovery
+    origin = _find_result(results, 'Origin IP')
+    if origin and hasattr(origin, 'confirmed'):
+        confirmed = origin.confirmed()
+        possible = origin.possible()
+        cf_ips = getattr(origin, 'cf_ips', [])
+        if cf_ips:
+            print(f"  {BR}{Y}◈{RS}  Cloudflare IPs  : {Y}{', '.join(cf_ips)}{RS}")
+        if confirmed:
+            critical(f"Origin IP FOUND: {', '.join(c.ip for c in confirmed)}")
+            for c in confirmed:
+                src = c.source
+                print(f"       {DM}Source: {src} | {c.evidence}{RS}")
+        elif possible:
+            warn(f"Possible origin IPs: {', '.join(c.ip for c in possible)}")
+            for c in possible:
+                src = c.source
+                print(f"       {DM}Source: {src} | {c.evidence}{RS}")
+        else:
+            ok("Origin IP: No non-Cloudflare origin found (well-protected)")
+
     print()
 
 
@@ -1167,11 +1204,14 @@ async def handle_export():
 
     def _clean(obj, key_name=''):
         """Recursively make any value JSON-safe.
-        datetime → ISO 8601 str, tuple → list, anything else → str() fallback."""
+        datetime/date → ISO 8601 str, dataclass → dict, tuple → list, anything else → str() fallback."""
         normalized_key = key_name.lower().replace('-', '_')
         if (normalized_key in sensitive_keys or
             normalized_key.endswith(('_secret', '_token', '_key'))):
             return '[REDACTED]'
+        import dataclasses
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            return {f.name: _clean(getattr(obj, f.name), f.name) for f in dataclasses.fields(obj)}
         if isinstance(obj, datetime):
             return obj.isoformat()
         if isinstance(obj, dict):
@@ -1589,6 +1629,22 @@ def handle_js_secrets():
     pause()
 
 
+# ── Origin IP Discovery (Cloudflare bypass via OSINT) ─────────────────────
+async def handle_origin_ip():
+    """Find the real server IP behind Cloudflare/WAF using passive OSINT."""
+    t = get_target()
+    if not t: return
+    st_key = None
+    if SESSION.get('interactive'):
+        st_raw = input(f"  {BR}{W}SecurityTrails API key (optional, Enter to skip): {RS}").strip()
+        if st_raw:
+            st_key = st_raw
+    res = await _run_sync(find_origin_ip, t, st_key)
+    SESSION['results']['origin_ip'] = res
+    if SESSION.get('interactive'):
+        pause()
+
+
 HANDLERS = {
     '1':  handle_dns,
     '2':  handle_whois,
@@ -1642,6 +1698,7 @@ HANDLERS = {
     '44': handle_api_enum,
     '45': handle_mobile_api_enum,
     '46': handle_nuclei_scan,
+    '47': handle_origin_ip,
     # Navigation
     't':  set_target,
     'T':  set_target,
@@ -1678,6 +1735,7 @@ def _build_disclaimer() -> str:
 
 
 async def interactive_mode():
+    SESSION['interactive'] = True
     if is_first_launch():
         run_language_picker()
     cls()
@@ -1770,6 +1828,8 @@ async def main():
             await handle_port_common()
         elif mod == "nuclei":
             await handle_nuclei_scan()
+        elif mod == "osint-origin":
+            await handle_origin_ip()
         else:
             await handle_auto_scan()
     else:
