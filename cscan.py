@@ -15,6 +15,12 @@ import asyncio
 import inspect
 import functools
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 VERSION = "0.9.0"
 SUPPORTED_MODULES = {
     "dns": "DNS and host intelligence",

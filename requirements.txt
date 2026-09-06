@@ -18,3 +18,4 @@ psycopg2-binary
 # Requires a Playwright-compatible desktop/server environment (not Termux)
 camoufox[geoip]
 # After install run: python -m camoufox fetch
+\npython-dotenv

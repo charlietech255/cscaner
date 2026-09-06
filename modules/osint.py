@@ -9,6 +9,7 @@ Gathers intelligence WITHOUT touching the target directly:
   - HaveIBeenPwned domain breach check
 """
 
+import os
 import re
 import json
 import time
@@ -48,11 +49,14 @@ def _extract_domain(hostname: str) -> str:
 
 
 # ── Shodan ───────────────────────────────────────────────────────────────────
-def shodan_lookup(target: str, api_key: str) -> dict:
+def shodan_lookup(target: str, api_key: str = None) -> dict:
     section("SHODAN HOST INTELLIGENCE")
 
     if not api_key:
-        warn("No Shodan API key provided. Get a free one at https://account.shodan.io")
+        api_key = os.getenv('SHODAN_API_KEY')
+
+    if not api_key:
+        warn("No Shodan API key provided. Set SHODAN_API_KEY in .env or provide it directly. Get a free one at https://account.shodan.io")
         return {}
 
     hostname = _extract_hostname(target)
