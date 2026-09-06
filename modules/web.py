@@ -736,11 +736,28 @@ def detect_waf(target: str, use_ssl: bool = False) -> str | None:
     headers = {k.lower(): v.lower() for k, v in r.headers.items()}
     for waf, sigs in waf_signatures.items():
         for sig in sigs:
-            for h_val in headers.values():
-                if sig in h_val:
+            # Check both keys (e.g. 'cf-ray') and values (e.g. 'cloudflare')
+            for h_key, h_val in headers.items():
+                if sig in h_key or sig in h_val:
                     alert(f"WAF DETECTED: {BR}{M}{waf}{RS}")
                     return waf
     
+    # Fallback: check if the domain resolves to a Cloudflare IP
+    try:
+        import socket
+        from modules.osnit_origin_ip import _is_cloudflare_ip
+        hostname = _extract_hostname(target)
+        infos = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        ips = list(set(info[4][0] for info in infos))
+        for ip in ips:
+            if _is_cloudflare_ip(ip):
+                alert(f"WAF DETECTED: {BR}{M}Cloudflare (via IP Resolution){RS}")
+                return "cloudflare"
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
     ok("No WAF detected")
     return None
 
