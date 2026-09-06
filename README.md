@@ -204,7 +204,10 @@ Then in the menu:
 - inject the solved `cf_clearance` cookie into the session
 - continue with the normal scan flow
 
-The browser path is only effective when Camoufox is installed and the challenge is solvable.
+**How it works (and its limitations):**
+The browser path uses **Camoufox**, a specialized stealth browser engine, to evade anti-bot detection. It achieves this by spoofing browser fingerprints (such as WebGL, fonts, and canvas) and simulating human-like behavior to solve Cloudflare JavaScript challenges and retrieve a valid `cf_clearance` cookie.
+
+**Note on Accuracy:** The Camoufox bypass is **not 100% accurate**. Cloudflare frequently updates its security heuristics and Turnstile challenges. Success varies significantly depending on your IP reputation and the target's strictness level. You might still get blocked on heavily protected sites. This feature is only effective when Camoufox is installed and the challenge is actually solvable.
 
 ### 7) Export and review results
 
