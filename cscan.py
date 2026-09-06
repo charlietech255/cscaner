@@ -1027,8 +1027,11 @@ async def handle_auto_scan():
         try:
             r = await fn(*args)
             all_results[label] = r
+            
+            if label == "Origin IP Discovery (OSINT)":
+                SESSION['results']['origin_ip'] = r
 
-            # ── WAF block recovery: if web step got no results, retry once
+            # WAF block recovery: if web step got no results, retry once
             if wafs_found and r is not None and 'Web Vuln Scan' in label:
                 exposed = r.get('exposed', []) if isinstance(r, dict) else []
                 if not exposed:
