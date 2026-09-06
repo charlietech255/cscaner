@@ -232,7 +232,67 @@ Check the generated JSON and text reports for:
 python3 cscan.py
 ```
 
-Set a target in the menu, choose a module, and export results when the scan is complete.
+Set a target in the menu, choose a module, and export results when the scan is complete. The interactive CLI menu offers the following categories and options:
+
+#### 🔍 RECONNAISSANCE & NETWORK
+- `[01]` **DNS Lookup**: Queries DNS records (A, MX, TXT, etc.).
+- `[02]` **WHOIS**: Retrieves domain registration details.
+- `[03]` **Subdomains**: Attempts to discover subdomains.
+- `[04]` **GeoIP Tracker**: Resolves the target's IP to a physical location.
+- `[05]` **Reverse DNS**: Performs a PTR record lookup on the IP.
+- `[06]` **Port Scan**: Quick scan of common TCP ports.
+- `[07]` **Full Port Scan**: Extensive scan across a wider range of ports.
+- `[08]` **Banner Grabber**: Captures service banners from open ports.
+- `[09]` **SSL/TLS Inspect**: Audits the SSL certificate and cipher configs.
+
+#### 🌐 WEB & EXPLOITATION
+- `[10]` **Web Vuln Scan**: Basic vulnerability checks against the web app.
+- `[11]` **HTTP Headers**: Analyzes headers for security misconfigurations.
+- `[12]` **Dir Brute Force**: Finds hidden directories and files.
+- `[13]` **CMS Detect**: Identifies the Content Management System.
+- `[14]` **SSH Audit**: Audits SSH for weaknesses or default credentials.
+- `[15]` **FTP Anonymous**: Checks for anonymous FTP login.
+- `[16]` **HTTP Auth**: Tests for HTTP Authentication weaknesses.
+
+#### 🤖 AUTOMATION & AI
+- `[17]` **Full Auto-Scan**: Comprehensive automated recon and scanning.
+- `[18]` **Export Results**: Saves findings to a JSON/text report.
+- `[19]` **Analyse with AI**: Deep analysis of scan results using AI.
+- `[20]` **Quick AI Overview**: Fast, high-level AI summary.
+- `[21]` **CVE Lookup**: Searches NVD for discovered software versions.
+- `[22]` **Ask AI Assistant**: Interactive prompt to ask the AI questions.
+- `[23]` **Security Report**: Generates a formalized security report.
+
+#### 🥷 STEALTH & ADVANCED OPSEC
+- `[24]` **Stealth Config**: Configure proxies, timing, and user-agents.
+- `[25]` **Toggle Stealth**: Quickly toggles stealth mode on/off.
+- `[26]` **CF WAF Bypass (solve)**: Solves Cloudflare JS challenges.
+- `[27]` **CF Bypass + Inject Session**: Solves CF and injects the clearance cookie into the session.
+
+#### 🦊 ADVANCED BROWSER ENGINE (Camoufox)
+- `[28]` **JS-Rendered Page**: Loads page in browser for JS content.
+- `[29]` **Network Traffic**: Captures background API/network requests.
+- `[30]` **Form Login Tester**: Tests login forms interactively.
+- `[31]` **Screenshot Recon**: Takes visual screenshots of the target.
+- `[32]` **Browser Fingerprint**: Analyzes how the target tracks fingerprints.
+- `[33]` **Cookie Harvester**: Collects and analyzes cookies.
+- `[34]` **JS Secret Scanner**: Scans client-side JS for hardcoded secrets.
+
+#### 💣 ACTIVE EXPLOITATION
+- `[35]` **Active Vuln Scan (XSS/SQLi/SSRF)**: Injects payloads to confirm vulnerabilities.
+- `[36]` **Live CVE Map (NVD API)**: Queries live NVD API for target's stack.
+- `[37]` **NVD Manual CVE Lookup**: Manual search in the CVE database.
+- `[38]` **UDP Scanner (SNMP/TFTP/NTP)**: Scans for misconfigured UDP services.
+- `[39]` **Deep SSL/TLS Audit**: Advanced cryptographic checks (e.g., Heartbleed).
+- `[40]` **OSINT Passive Recon**: Passive intelligence gathering (Shodan, Wayback).
+- `[41]` **Service Brute**: Credential brute-forcing (MySQL, Redis, RDP).
+
+#### 🕷️ CRAWLER & AUTH
+- `[42]` **Web Crawler (Discovery)**: Spiders the website to map pages and assets.
+- `[43]` **Auth / Session Config**: Sets up headers/cookies for authenticated scanning.
+- `[44]` **Path/API Enumerator**: Wordlist-based API and route enumeration.
+
+- `[00]` **Exit**: Closes the application.
 
 ### Direct mode
 
