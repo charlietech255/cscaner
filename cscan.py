@@ -1175,8 +1175,11 @@ def _print_auto_summary(target, results, elapsed, wafs_found=None, cf_bypassed=F
         cf_ips = getattr(origin, 'cf_ips', [])
         if cf_ips:
             print(f"  {BR}{Y}◈{RS}  Cloudflare IPs  : {Y}{', '.join(cf_ips)}{RS}")
+        
         if confirmed:
-            critical(f"Origin IP FOUND: {', '.join(c.ip for c in confirmed)}")
+            real_ips_str = ', '.join(c.ip for c in confirmed)
+            print(f"  {BR}{R}◈{RS}  Real Server IP  : {R}{real_ips_str}{RS}")
+            critical(f"Origin IP FOUND: {real_ips_str}")
             for c in confirmed:
                 src = c.source
                 print(f"       {DM}Source: {src} | {c.evidence}{RS}")
