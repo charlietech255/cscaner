@@ -28,6 +28,16 @@ Use it only against systems you own or systems for which you have explicit permi
 - A network connection is required for hosted-target scans, NVD, OSINT providers, wordlists, and optional AI services.
 - Only use hosted URLs that are authorized for testing.
 
+## Optional API Keys (For Maximum Capability)
+To work perfectly and unlock its full potential, CSCAN integrates with several external services. While the basic scanner works without them, providing these API keys enhances the OSINT and AI capabilities:
+
+- **Google Gemini API**: Powers the AI Analyst (`modules/ai_analyst.py`) for automated host analysis, CVE summaries, interactive questions, and security report generation.
+  - *How to get it*: Go to [Google AI Studio](https://aistudio.google.com/app/apikey), sign in with a Google account, and click "Create API key". A free tier is available.
+- **Shodan API**: Used by the OSINT module (`modules/osint.py`) to discover open ports, exposed services, and historical IP data passively without touching the target.
+  - *How to get it*: Create an account at [Shodan.io](https://account.shodan.io/). Your API key is available on your Account Overview dashboard.
+- **SecurityTrails API**: Used by the Origin IP Discovery module (`modules/osnit_origin_ip.py`) to query historical DNS `A` records (useful for finding the true IP before a site was moved behind Cloudflare or a WAF).
+  - *How to get it*: Sign up for a free account at [SecurityTrails](https://securitytrails.com/app/signup). You can find your API key in the API section of your account settings.
+
 ## Installation
 
 ### Recommended desktop/server setup (best for full features)
