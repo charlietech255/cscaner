@@ -18,4 +18,9 @@ psycopg2-binary
 # Requires a Playwright-compatible desktop/server environment (not Termux)
 camoufox[geoip]
 # After install run: python -m camoufox fetch
+
+# Optional: Chrome TLS + HTTP/2 fingerprint impersonation for the web crawler,
+# so WAFs that block plain Python-requests clients can be bypassed WITHOUT a browser.
+# The crawler auto-detects it and gracefully falls back if it's missing.
+curl_cffi
 \npython-dotenv

@@ -12,6 +12,13 @@ from modules.web import _cookie_security_flags
 from modules.stealth import StealthSession
 from modules.ui import print_table, progress_bar
 from modules.utils import normalize_target
+import modules.crawler as crawler_mod
+from modules.crawler import (
+    _BROWSER_HEADERS,
+    _UA_CHROME,
+    _get,
+    curl_impersonation_available,
+)
 
 
 class CliParserTests(unittest.TestCase):
@@ -344,6 +351,34 @@ class SubdomainFinderTests(unittest.TestCase):
 
         self.assertEqual(extract_hostname("https://example.com/admin?q=1"), "example.com")
         self.assertEqual(extract_hostname("example.com"), "example.com")
+
+
+class CrawlerFingerprintTests(unittest.TestCase):
+    def test_browser_headers_include_chrome_tells(self):
+        self.assertEqual(_BROWSER_HEADERS["User-Agent"], _UA_CHROME)
+        for key in ("sec-ch-ua", "sec-ch-ua-mobile", "Sec-Fetch-Dest",
+                    "Sec-Fetch-Mode", "Sec-Fetch-Site", "Upgrade-Insecure-Requests"):
+            self.assertIn(key, _BROWSER_HEADERS)
+        self.assertNotIn("ohc-cralwer", _BROWSER_HEADERS)
+        self.assertNotIn("scanner", _BROWSER_HEADERS["User-Agent"].lower())
+
+    def test_curl_impersonation_detection_is_stable(self):
+        result = curl_impersonation_available()
+        self.assertIsInstance(result, bool)
+
+    def test_get_reports_connection_error_message(self):
+        resp = _get("http://127.0.0.1:1", timeout=1)
+        self.assertIsNone(resp)
+        err = crawler_mod._last_http_error or ""
+        self.assertIn("127.0.0.1", err)
+        self.assertTrue(
+            any(k in err for k in ("ConnectTimeout", "Max retries exceeded", "ConnectionError")),
+            err,
+        )
+
+    def test_get_passes_extra_headers_through(self):
+        resp = _get("https://example.com", timeout=15, headers={"Foo": "Bar"})
+        self.assertIsNotNone(resp)
 
 
 if __name__ == "__main__":

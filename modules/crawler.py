@@ -29,6 +29,39 @@ from modules.ui import (
 _stealth_session = None
 _insecure_ssl = False
 TIMEOUT = 8
+_last_http_error = None
+
+# curl_cffi (optional) impersonates a real browser at the TLS + HTTP/2 level,
+# so WAFs that fingerprint non-browser clients can't tell us apart — no
+# Camoufox/browser needed. Lazily loaded to keep the import chain dependency-free.
+_curl_cffi = None          # None = not attempted yet, False = unavailable
+_curl_session = None
+_plain_session = None
+
+_UA_CHROME = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+              '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36')
+
+# Full modern-Chrome request header profile. WAFs flag thin clients (single UA
+# header) more often than they flag anything else, so always send this set.
+_BROWSER_HEADERS = {
+    'User-Agent': _UA_CHROME,
+    'Accept': ('text/html,application/xhtml+xml,application/xml;q=0.9,image/'
+               'avif,image/webp,image/apng,*/*;q=0.8,application/signed-'
+               'exchange;v=b3;q=0.7'),
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br, zstd',
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+    'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not.A/Brand";v="99"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
+    'Connection': 'keep-alive',
+}
 
 
 def set_stealth_session(s):
@@ -41,20 +74,63 @@ def set_insecure_ssl(flag):
 
 
 # ── HTTP helper ───────────────────────────────────────────────────────────────
+def curl_impersonation_available():
+    """True when curl_cffi is importable (real Chrome TLS/HTTP2 impersonation)."""
+    global _curl_cffi
+    if _curl_cffi is None:
+        try:
+            from curl_cffi import requests as _curl_requests
+            _curl_cffi = _curl_requests
+        except Exception:
+            _curl_cffi = False
+    return bool(_curl_cffi)
+
+
+def _impersonation_name():
+    """Name of the active browser-fingerprint layer (for logging)."""
+    if curl_impersonation_available():
+        return 'curl_cffi (Chrome TLS+HTTP2)'
+    return 'requests + full Chrome headers (HTTP/1.1)'
+
+
+def _curl_get(url, timeout, allow_redirects, cookies, headers):
+    global _curl_session
+    if _curl_session is None:
+        _curl_session = _curl_cffi.Session(impersonate='chrome')
+    return _curl_session.get(url, timeout=timeout, allow_redirects=allow_redirects,
+                             cookies=cookies, headers=headers,
+                             verify=not _insecure_ssl)
+
+
+def _plain_get(url, timeout, allow_redirects, cookies, headers):
+    global _plain_session
+    if _plain_session is None:
+        _plain_session = requests.Session()
+        _plain_session.headers.update(_BROWSER_HEADERS)
+    return _plain_session.get(url, timeout=timeout, allow_redirects=allow_redirects,
+                              cookies=cookies, headers=headers, verify=not _insecure_ssl)
+
+
 def _get(url, timeout=TIMEOUT, allow_redirects=True, cookies=None, headers=None):
+    global _last_http_error
     try:
-        kw = {'timeout': timeout, 'allow_redirects': allow_redirects}
-        if cookies:
-            kw['cookies'] = cookies
+        _last_http_error = None
         if _stealth_session:
+            # Stealth layer owns its own identity (rotating UA / proxy / jitter).
+            kw = {'timeout': timeout, 'allow_redirects': allow_redirects}
+            if cookies:
+                kw['cookies'] = cookies
             if headers:
                 kw['headers'] = headers
             return _stealth_session.get(url, **kw)
-        h = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
+        bh = dict(_BROWSER_HEADERS)
         if headers:
-            h.update(headers)
-        return requests.get(url, headers=h, verify=not _insecure_ssl, **kw)
-    except Exception:
+            bh.update(headers)
+        if curl_impersonation_available():
+            return _curl_get(url, timeout, allow_redirects, cookies, bh)
+        return _plain_get(url, timeout, allow_redirects, cookies, bh)
+    except Exception as e:
+        _last_http_error = f"{type(e).__name__}: {e}"
         return None
 
 
@@ -483,6 +559,19 @@ class WebCrawler:
         self._detect_catch_all()
         if self._catch_all_hash:
             warn("Catch-all routing detected — duplicate content will be filtered.")
+
+        # Verify the target is reachable before burning time on the BFS crawl
+        info(f"Browser fingerprint : {_impersonation_name()}")
+        seed_headers = {'Authorization': self.auth_header} if self.auth_header else None
+        seed = _get(self.base_url, cookies=self.cookies, headers=seed_headers)
+        if seed is None:
+            alert(f"Target unreachable — {_last_http_error or 'connection failed'}.")
+            warn("No pages were crawled. Check the URL, DNS/firewall, WAF blocking,"
+                 " proxy settings, or your network connectivity.")
+            return self._build_result()
+        if seed.status_code >= 400:
+            warn(f"Target seed URL returned HTTP {seed.status_code}."
+                 " The page may exist but block automated clients.")
 
         # BFS crawl
         queue = deque([(self.base_url, 0)])
