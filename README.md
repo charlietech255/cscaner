@@ -250,6 +250,7 @@ Set a target in the menu, choose a module, and export results when the scan is c
 - `[03]` **Subdomains**: Attempts to discover subdomains.
 - `[04]` **GeoIP Tracker**: Resolves the target's IP to a physical location.
 - `[05]` **Reverse DNS**: Performs a PTR record lookup on the IP.
+- `[48]` **Subdomain Deep**: Dedicated deep subdomain finder merging crt.sh, Rapiddns, HackerTarget, AlienVault OTX, and DNS bruteforce with Cloudflare-flagging.
 - `[06]` **Port Scan**: Quick scan of common TCP ports.
 - `[07]` **Full Port Scan**: Extensive scan across a wider range of ports.
 - `[08]` **Banner Grabber**: Captures service banners from open ports.
@@ -338,6 +339,7 @@ The following modules are available in `modules/`. Some are called by the intera
 | Module | Purpose |
 | --- | --- |
 | `recon.py` | DNS records, WHOIS, subdomains, certificate-transparency names, GeoIP, and reverse DNS. When a resolved IP is a Cloudflare/WAF edge IP, it also runs Origin IP Discovery via `osnit_origin_ip.py` and shows the real server IP. |
+| `subdomain_finder.py` | Dedicated deep subdomain finder combining passive DNS (crt.sh, Rapiddns, HackerTarget, AlienVault OTX) with wordlist DNS bruteforce, wildcard detection, and Cloudflare edge-IP flagging. |
 | `scanner.py` | Common/full TCP port scans, service banners, and basic TLS certificate inspection. If the target resolves behind Cloudflare it searches for and displays the real origin IP. |
 | `udp_scanner.py` | UDP service probes for selected DNS, SNMP, TFTP, and NTP indicators. Results are best-effort and require confirmation. |
 | `utils.py` | Shared target hostname and IP resolution, including IPv4/IPv6 handling. |

@@ -279,5 +279,72 @@ class OriginIPDiscoveryTests(unittest.TestCase):
         self.assertIsInstance(results, list)
 
 
+class SubdomainFinderTests(unittest.TestCase):
+    """Tests for the dedicated deep subdomain finder module (offline parsers)."""
+
+    def test_parse_crtsh_json_filters_apex_and_wildcards(self):
+        from modules.subdomain_finder import _parse_crtsh
+
+        data = [
+            {"name_value": "api.example.com\n*.api.example.com"},
+            {"name_value": "example.com"},
+            {"name_value": " mail.example.com\n*."},
+        ]
+        names = _parse_crtsh(data, "example.com")
+        self.assertIn("api.example.com", names)
+        self.assertIn("mail.example.com", names)
+        self.assertNotIn("example.com", names)
+        self.assertNotIn("*.api.example.com", names)
+
+    def test_parse_rapiddns_html_extracts_subdomains(self):
+        from modules.subdomain_finder import _parse_rapiddns
+
+        html = (
+            '<a href="//api.example.com">api.example.com</a> '
+            '<td>mail.example.com</td> '
+            '<td>example.com</td> unrelated'
+        )
+        names = _parse_rapiddns(html, "example.com")
+        self.assertIn("api.example.com", names)
+        self.assertIn("mail.example.com", names)
+        self.assertNotIn("example.com", names)
+
+    def test_parse_hackertarget_csv(self):
+        from modules.subdomain_finder import _parse_hackertarget
+
+        text = (
+            "api.example.com,1.2.3.4\n"
+            "mail.example.com,5.6.7.8\n"
+            "bad.example.com,not-an-ip\n"
+            "example.com,9.9.9.9\n"
+        )
+        names, ips = _parse_hackertarget(text, "example.com")
+        self.assertIn("api.example.com", names)
+        self.assertIn("mail.example.com", names)
+        self.assertNotIn("bad.example.com", names)
+        self.assertNotIn("example.com", names)
+        self.assertEqual(ips.get("api.example.com"), "1.2.3.4")
+
+    def test_parse_otx_json(self):
+        from modules.subdomain_finder import _parse_otx
+
+        data = {
+            "passive_dns": [
+                {"hostname": "admin.example.com."},
+                {"hostname": "example.com"},
+                {"hostname": ""},
+            ]
+        }
+        names = _parse_otx(data, "example.com")
+        self.assertIn("admin.example.com", names)
+        self.assertNotIn("example.com", names)
+
+    def test_extract_hostname_strips_scheme_and_path(self):
+        from modules.subdomain_finder import extract_hostname
+
+        self.assertEqual(extract_hostname("https://example.com/admin?q=1"), "example.com")
+        self.assertEqual(extract_hostname("example.com"), "example.com")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -110,6 +110,7 @@ def _build_menu() -> str:
     {G}[03]{RS} {T("sm3"):<22} {G}[08]{RS} {T("sm8")}
     {G}[04]{RS} {T("sm4"):<22} {G}[09]{RS} {T("sm9")}
     {G}[05]{RS} {T("sm5"):<22}
+    {G}[48]{RS} {T("sm48"):<22}
 
 {BR}{C}  WEB & EXPLOITATION{RS}
     {Y}[10]{RS} {T("sm10"):<22} {Y}[14]{RS} {T("sm14")}

@@ -125,6 +125,9 @@ from modules.mobile_api_enum import enumerate_mobile_api_endpoints
 from modules.nuclei import run_nuclei_scan, nuclei_available, install_nuclei_instructions
 from modules.utils import normalize_target
 from modules.osnit_origin_ip import find_origin_ip
+# ── v3.2 — Deep Subdomain Finder ──────────────────────────────────────────────
+from modules.subdomain_finder import deep_subdomain_finder
+from modules.subdomain_finder import set_stealth_session as subfinder_set_stealth
 
 # ── Session state ─────────────────────────────────────────────────────────────
 SESSION = {
@@ -279,6 +282,7 @@ def _apply_stealth():
         activevuln_set_stealth(sess)
         crawler_set_stealth(sess)
         apienum_set_stealth(sess)
+        subfinder_set_stealth(sess)
     else:
         web_set_stealth(None)
         recon_set_stealth(None)
@@ -286,6 +290,7 @@ def _apply_stealth():
         activevuln_set_stealth(None)
         crawler_set_stealth(None)
         apienum_set_stealth(None)
+        subfinder_set_stealth(None)
 
 
 def show_status():
@@ -349,6 +354,24 @@ async def handle_subdomain():
     workers = TIMING_PROFILES.get(timing, {}).get('workers', 30)
     res = await _run_sync(subdomain_enum, t, wl, workers=workers)
     SESSION['results']['subdomains'] = res
+    pause()
+
+
+async def handle_subdomain_finder():
+    """Deep subdomain finder — merges crt.sh, Rapiddns, HackerTarget, OTX, and DNS bruteforce."""
+    t = get_target()
+    if not t: return
+    _apply_stealth()
+    wl = None
+    bundled = os.path.join(os.path.dirname(__file__), 'wordlists', 'subdomains.txt')
+    if os.path.isfile(bundled):
+        with open(bundled) as f:
+            wl = [line.strip() for line in f if line.strip()]
+        info(f"Loaded {len(wl)} entries from subdomains.txt.")
+    timing = SESSION['stealth']['timing'] if SESSION['stealth']['enabled'] else 'normal'
+    workers = TIMING_PROFILES.get(timing, {}).get('workers', 30)
+    res = await _run_sync(deep_subdomain_finder, t, wl, workers=workers)
+    SESSION['results']['subdomain_finder'] = res
     pause()
 
 async def handle_geoip():
@@ -1728,6 +1751,7 @@ HANDLERS = {
     '45': handle_mobile_api_enum,
     '46': handle_nuclei_scan,
     '47': handle_origin_ip,
+    '48': handle_subdomain_finder,
     # Navigation
     't':  set_target,
     'T':  set_target,
