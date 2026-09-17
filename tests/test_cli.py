@@ -353,6 +353,48 @@ class SubdomainFinderTests(unittest.TestCase):
         self.assertEqual(extract_hostname("example.com"), "example.com")
 
 
+class EmailFinderTests(unittest.TestCase):
+    def test_extract_emails_from_text(self):
+        from modules.email_finder import _extract_from_text
+
+        text = ("mailto:support@example.com and admin@example.com "
+                "then support@example.com again, guest@example.com."
+                " info@example.net should be kept too.")
+        found = _extract_from_text(text, "example.com")
+        self.assertIn("support@example.com", found)
+        self.assertIn("admin@example.com", found)
+        self.assertIn("guest@example.com", found)
+        self.assertEqual(len(found), 4)
+
+    def test_extract_ignores_placeholder_domains(self):
+        from modules.email_finder import _extract_from_text
+
+        text = ("Contact user@example.com never user@example.test "
+                "or user@p.example.invalid or user@example.local.")
+        found = _extract_from_text(text, "example.com")
+        self.assertIn("user@example.com", found)
+        self.assertNotIn("user@example.test", found)
+        self.assertEqual(len(found), 1)
+
+    def test_role_and_external_classification(self):
+        from modules.email_finder import _is_role, _is_external
+
+        self.assertTrue(_is_role("info@example.com"))
+        self.assertTrue(_is_role("admin@example.com"))
+        self.assertFalse(_is_role("jdoe@example.com"))
+        self.assertFalse(_is_external("jdoe@example.com", "example.com"))
+        self.assertFalse(_is_external("jdoe@sub.example.com", "example.com"))
+        self.assertFalse(_is_external("jdoe@sub.example.com", "sub.example.com"))
+        self.assertTrue(_is_external("jdoe@external.net", "example.com"))
+
+    def test_register_dedupes_across_sources(self):
+        from modules.email_finder import _extract_from_text
+
+        a = _extract_from_text("support@example.com", "example.com")
+        b = _extract_from_text("Support@example.com", "example.com")
+        self.assertEqual(a, b)
+
+
 class CrawlerFingerprintTests(unittest.TestCase):
     def test_browser_headers_include_chrome_tells(self):
         self.assertEqual(_BROWSER_HEADERS["User-Agent"], _UA_CHROME)

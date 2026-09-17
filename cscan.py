@@ -128,6 +128,9 @@ from modules.osnit_origin_ip import find_origin_ip
 # ── v3.2 — Deep Subdomain Finder ──────────────────────────────────────────────
 from modules.subdomain_finder import deep_subdomain_finder
 from modules.subdomain_finder import set_stealth_session as subfinder_set_stealth
+# ── v3.3 — Email Finder ───────────────────────────────────────────────────────
+from modules.email_finder import email_finder
+from modules.email_finder import set_stealth_session as emailfinder_set_stealth
 
 # ── Session state ─────────────────────────────────────────────────────────────
 SESSION = {
@@ -283,6 +286,7 @@ def _apply_stealth():
         crawler_set_stealth(sess)
         apienum_set_stealth(sess)
         subfinder_set_stealth(sess)
+        emailfinder_set_stealth(sess)
     else:
         web_set_stealth(None)
         recon_set_stealth(None)
@@ -291,6 +295,7 @@ def _apply_stealth():
         crawler_set_stealth(None)
         apienum_set_stealth(None)
         subfinder_set_stealth(None)
+        emailfinder_set_stealth(None)
 
 
 def show_status():
@@ -372,6 +377,16 @@ async def handle_subdomain_finder():
     workers = TIMING_PROFILES.get(timing, {}).get('workers', 30)
     res = await _run_sync(deep_subdomain_finder, t, wl, workers=workers)
     SESSION['results']['subdomain_finder'] = res
+    pause()
+
+
+async def handle_email_finder():
+    """Email finder — crawl, CT logs, WHOIS, and search exposure mining."""
+    t = get_target()
+    if not t: return
+    _apply_stealth()
+    res = await _run_sync(email_finder, t, use_crawl=True, use_search=True)
+    SESSION['results']['email_finder'] = res
     pause()
 
 async def handle_geoip():
@@ -1752,6 +1767,7 @@ HANDLERS = {
     '46': handle_nuclei_scan,
     '47': handle_origin_ip,
     '48': handle_subdomain_finder,
+    '49': handle_email_finder,
     # Navigation
     't':  set_target,
     'T':  set_target,

@@ -251,6 +251,7 @@ Set a target in the menu, choose a module, and export results when the scan is c
 - `[04]` **GeoIP Tracker**: Resolves the target's IP to a physical location.
 - `[05]` **Reverse DNS**: Performs a PTR record lookup on the IP.
 - `[48]` **Subdomain Deep**: Dedicated deep subdomain finder merging crt.sh, Rapiddns, HackerTarget, AlienVault OTX, and DNS bruteforce with Cloudflare-flagging.
+- `[49]` **Email Finder**: Mines public e-mail addresses from site crawl, crt.sh, WHOIS, and DuckDuckGo; flags role/external addresses and reports MX records.
 - `[06]` **Port Scan**: Quick scan of common TCP ports.
 - `[07]` **Full Port Scan**: Extensive scan across a wider range of ports.
 - `[08]` **Banner Grabber**: Captures service banners from open ports.
@@ -340,6 +341,7 @@ The following modules are available in `modules/`. Some are called by the intera
 | --- | --- |
 | `recon.py` | DNS records, WHOIS, subdomains, certificate-transparency names, GeoIP, and reverse DNS. When a resolved IP is a Cloudflare/WAF edge IP, it also runs Origin IP Discovery via `osnit_origin_ip.py` and shows the real server IP. |
 | `subdomain_finder.py` | Dedicated deep subdomain finder combining passive DNS (crt.sh, Rapiddns, HackerTarget, AlienVault OTX) with wordlist DNS bruteforce, wildcard detection, and Cloudflare edge-IP flagging. |
+| `email_finder.py` | Email Exposure Finder — mines e-mail addresses from a live site crawl, certificate-transparency logs (crt.sh), WHOIS registrant/contact records, and an optional DuckDuckGo indexed-search pass. De-duplicates results, flags role addresses (info@, admin@…) and external/partner domains, and reports MX records via DNS-over-HTTPS. |
 | `scanner.py` | Common/full TCP port scans, service banners, and basic TLS certificate inspection. If the target resolves behind Cloudflare it searches for and displays the real origin IP. |
 | `udp_scanner.py` | UDP service probes for selected DNS, SNMP, TFTP, and NTP indicators. Results are best-effort and require confirmation. |
 | `utils.py` | Shared target hostname and IP resolution, including IPv4/IPv6 handling. |
