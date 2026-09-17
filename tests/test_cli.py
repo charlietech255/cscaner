@@ -241,5 +241,43 @@ class CliParserTests(unittest.TestCase):
         self.assertIn("findings", result)
 
 
+class OriginIPDiscoveryTests(unittest.TestCase):
+    """Tests for the osnit_origin_ip module."""
+
+    def test_origin_candidate_dedupe_merges_sources(self):
+        from modules.osnit_origin_ip import OriginCandidate, OriginIPReport
+
+        report = OriginIPReport(domain="example.com")
+        report.add(OriginCandidate(ip="1.2.3.4", source="mx:mail", evidence="lead A", confidence="possible"))
+        report.add(OriginCandidate(ip="1.2.3.4", source="cert_sh:old", evidence="lead B", confidence="confirmed",
+                                   verified_response_snippet="<html>real</html>"))
+        self.assertEqual(len(report.candidates), 1)
+        self.assertEqual(report.candidates[0].confidence, "confirmed")
+        self.assertIn("mx:mail", report.candidates[0].source)
+        self.assertIn("cert_sh:old", report.candidates[0].source)
+
+    def test_is_cloudflare_ip_matches_published_ranges(self):
+        from modules.osnit_origin_ip import _is_cloudflare_ip
+
+        self.assertTrue(_is_cloudflare_ip("104.16.5.5"))
+        self.assertTrue(_is_cloudflare_ip("172.67.214.70"))
+        self.assertTrue(_is_cloudflare_ip("131.0.72.3"))
+        self.assertFalse(_is_cloudflare_ip("203.0.113.5"))
+        self.assertFalse(_is_cloudflare_ip("8.8.8.8"))
+
+    def test_find_origin_ip_returns_report_shape(self):
+        from modules.osnit_origin_ip import find_origin_ip
+
+        report = find_origin_ip("https://mruhakika.site", verify=False)
+        self.assertIsNotNone(report.cf_ips)
+        self.assertIsInstance(report.candidates, list)
+
+    def test_crtsh_query_returns_candidates_or_empty_list(self):
+        from modules.osnit_origin_ip import _query_crtsh
+
+        results = _query_crtsh("example.com")
+        self.assertIsInstance(results, list)
+
+
 if __name__ == "__main__":
     unittest.main()

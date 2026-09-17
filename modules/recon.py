@@ -68,6 +68,21 @@ def dns_lookup(target: str) -> dict:
     except Exception:
         warn("No IPv4 address found.")
 
+    # If any resolved IP is a Cloudflare/WAF fronting IP, also find and show
+    # the real origin IP.
+    if result.get('ipv4'):
+        try:
+            from modules.osnit_origin_ip import maybe_show_origin, _is_cloudflare_ip
+            has_cf = any(_is_cloudflare_ip(ip) for ip in result['ipv4'])
+            if has_cf:
+                print()
+                info(f"{BR}{Y}Cloudflare/WAF IP detected — searching for the real origin IP...{RS}")
+                origin_report = maybe_show_origin(hostname)
+                if origin_report:
+                    result['origin_ip'] = origin_report
+        except ImportError:
+            pass
+
     # IPv6
     try:
         info_list = socket.getaddrinfo(hostname, None, socket.AF_INET6)
@@ -133,9 +148,16 @@ def whois_lookup(target: str) -> dict:
         rows = []
         for k, v in fields.items():
             if v:
-                val = ', '.join(v) if isinstance(v, list) else str(v).split('\n')[0]
-                rows.append((k, val[:60]))
-                print(f"  {DM}{C}{'·' * 2}{RS}  {BR}{Y}{k:<16}{RS}  {W}{val[:60]}{RS}")
+                # python-whois returns datetimes and lists of datetimes for some fields
+                if isinstance(v, (list, tuple)):
+                    vals = []
+                    for item in v:
+                        vals.append(str(item).split('\n')[0][:60])
+                    val = ', '.join(vals)
+                else:
+                    val = str(v).split('\n')[0][:60]
+                rows.append((k, val))
+                print(f"  {DM}{C}{'·' * 2}{RS}  {BR}{Y}{k:<16}{RS}  {W}{val}{RS}")
         return fields
     except ImportError:
         alert("python-whois not installed. Run: pip install python-whois")
@@ -257,6 +279,30 @@ def subdomain_enum(target: str, wordlist: list = None, workers: int = 30) -> lis
     else:
         warn("crt.sh returned no results (API may be rate-limited or domain is new).")
 
+    # Flag subdomains that resolve behind Cloudflare and, where possible,
+    # reveal the origin IP for those subdomains.
+    try:
+        from modules.osnit_origin_ip import maybe_show_origin, _is_cloudflare_ip
+    except ImportError:
+        maybe_show_origin, _is_cloudflare_ip = None, None
+
+    cf_subdomains = []
+    if found and _is_cloudflare_ip is not None:
+        for fqdn, ip in found:
+            if isinstance(ip, str) and ip != 'unresolved' and _is_cloudflare_ip(ip):
+                cf_subdomains.append((fqdn, ip))
+    if cf_subdomains:
+        print()
+        divider()
+        info(f"{BR}{Y}{len(cf_subdomains)} subdomain(s) resolve behind Cloudflare/WAF:{RS}")
+        for fqdn, ip in cf_subdomains[:4]:
+            print(f"  {BR}{Y}◈{RS}  {W}{fqdn:<40}{RS}  {Y}{ip}{RS}  {DM}(Cloudflare edge){RS}")
+            if maybe_show_origin is not None:
+                maybe_show_origin(fqdn)
+        if len(cf_subdomains) > 4:
+            info(f"{DM}Origin lookup run for the first 4 Cloudflare-fronted subdomains."
+                 f" Remaining {len(cf_subdomains) - 4} skipped to limit external lookups.{RS}")
+
     print()
     if found:
         ok(f"Total: {len(found)} subdomain(s) discovered.")
@@ -266,8 +312,15 @@ def subdomain_enum(target: str, wordlist: list = None, workers: int = 30) -> lis
 
 
 # ── GeoIP ─────────────────────────────────────────────────────────────────────
-# Known Cloudflare AS numbers — GeoIP on these returns CF's infra, not origin
-_CLOUDFLARE_ASN = {'AS13335', 'AS209242'}
+# Known Cloudflare AS numbers — GeoIP on these returns CF's infra, not origin.
+# Providers return them with or without the 'AS' prefix (e.g. '13335' vs 'AS13335'),
+# so matching is done on the numeric part only.
+_CLOUDFLARE_ASN_NUMBERS = {'13335', '209242'}
+
+def _is_cloudflare_asn(asn_value) -> bool:
+    """True when a provider ASN value belongs to Cloudflare, regardless of 'AS' prefix."""
+    digits = ''.join(ch for ch in str(asn_value or '') if ch.isdigit())
+    return digits in _CLOUDFLARE_ASN_NUMBERS
 
 def _find_origin_ips_via_mx(hostname: str) -> list:
     """Find related MX infrastructure; these addresses are not confirmed origins."""
@@ -297,6 +350,95 @@ def _find_origin_ips_via_mx(hostname: str) -> list:
     return list(potential_ips)
 
 
+def _geoip_query(ip: str) -> dict:
+    """Query GeoIP from multiple free providers with graceful fallback."""
+
+    def _provider(url, **kw):
+        try:
+            if _stealth_session:
+                return _stealth_session.get(url, timeout=8, **kw)
+            return requests.get(url, timeout=8, **kw)
+        except Exception:
+            return None
+
+    # Provider 1: ipwho.is (HTTPS, JSON)
+    r = _provider(f"https://ipwho.is/{ip}")
+    if r is not None and r.status_code == 200:
+        try:
+            d = r.json()
+            if d.get('success'):
+                return {
+                    'success': True,
+                    'query': d.get('ip', ip),
+                    'country': d.get('country', 'N/A'),
+                    'regionName': d.get('region', 'N/A'),
+                    'city': d.get('city', 'N/A'),
+                    'zip': d.get('postal', 'N/A'),
+                    'latitude': d.get('latitude', 'N/A'),
+                    'longitude': d.get('longitude', 'N/A'),
+                    'timezone': (d.get('timezone') or {}).get('id', 'N/A'),
+                    'isp': (d.get('connection') or {}).get('isp', 'N/A'),
+                    'org': (d.get('connection') or {}).get('org', 'N/A'),
+                    'as': str((d.get('connection') or {}).get('asn', 'N/A') or ''),
+                    'mobile': d.get('is_mobile', 'N/A'),
+                    'proxy': d.get('is_proxy', 'N/A'),
+                }
+        except (ValueError, TypeError):
+            pass  # fall through to next provider
+
+    # Provider 2: ip-api.com (free, HTTP) — reliable for host info
+    r2 = _provider(f"http://ip-api.com/json/{ip}", headers={'User-Agent': 'Mozilla/5.0 CSCAN'})
+    if r2 is not None and r2.status_code == 200:
+        try:
+            d2 = r2.json()
+            if d2.get('status') == 'success':
+                return {
+                    'success': True,
+                    'query': ip,
+                    'country': d2.get('country', 'N/A'),
+                    'regionName': d2.get('regionName', 'N/A'),
+                    'city': d2.get('city', 'N/A'),
+                    'zip': d2.get('zip', 'N/A'),
+                    'latitude': d2.get('lat', 'N/A'),
+                    'longitude': d2.get('lon', 'N/A'),
+                    'timezone': d2.get('timezone', 'N/A'),
+                    'isp': d2.get('isp', 'N/A'),
+                    'org': d2.get('org', 'N/A'),
+                    'as': d2.get('as', 'N/A'),
+                    'mobile': 'N/A',
+                    'proxy': d2.get('proxy', 'N/A'),
+                }
+        except (ValueError, TypeError):
+            pass
+
+    # Provider 3: ipinfo.io (free)
+    r3 = _provider(f"https://ipinfo.io/{ip}/json", headers={'User-Agent': 'curl/8.0'})
+    if r3 is not None and r3.status_code == 200:
+        try:
+            d3 = r3.json()
+            if d3.get('ip'):
+                return {
+                    'success': True,
+                    'query': ip,
+                    'country': d3.get('country', 'N/A'),
+                    'regionName': d3.get('region', 'N/A'),
+                    'city': d3.get('city', 'N/A'),
+                    'zip': d3.get('postal', 'N/A'),
+                    'latitude': (d3.get('loc') or '').split(',')[0] if d3.get('loc') else 'N/A',
+                    'longitude': (d3.get('loc') or '').split(',')[1] if d3.get('loc') else 'N/A',
+                    'timezone': d3.get('timezone', 'N/A'),
+                    'isp': (d3.get('org') or '').split(' ')[0] if d3.get('org') else 'N/A',
+                    'org': d3.get('org', 'N/A'),
+                    'as': d3.get('org', 'N/A'),
+                    'mobile': 'N/A',
+                    'proxy': 'N/A',
+                }
+        except (ValueError, TypeError):
+            pass
+
+    return {'success': False}
+
+
 def geoip_lookup(target: str) -> dict:
     section("GEOIP & LOCATION TRACKER")
     hostname = extract_hostname(target)
@@ -309,68 +451,73 @@ def geoip_lookup(target: str) -> dict:
 
     info(f"Looking up: {BR}{W}{ip}{RS}\n")
 
-    try:
-        # Use an HTTPS GeoIP provider; an MX address is related infrastructure,
-        # not proof of the web application's origin.
-        if _stealth_session:
-            r = _stealth_session.get(f"https://ipwho.is/{ip}", timeout=8)
+    d = _geoip_query(ip)
+    if not d.get('success'):
+        warn(f"All GeoIP providers failed for {ip} — skipping location data.")
+        try:
+            from modules.osnit_origin_ip import _is_cloudflare_ip
+            cloudflare_edge = _is_cloudflare_ip(ip)
+        except ImportError:
+            cloudflare_edge = False
+        if cloudflare_edge:
+            info("Cloudflare/edge IP detected — run the Origin IP Discovery module to find the real server.")
         else:
-            r = requests.get(f"https://ipwho.is/{ip}", timeout=8)
-        d = r.json()
-        if d.get('success'):
-            d = {
-                **d,
-                'query': d.get('ip', ip),
-                'country': d.get('country', 'N/A'),
-                'regionName': d.get('region', 'N/A'),
-                'lat': d.get('latitude', 'N/A'),
-                'lon': d.get('longitude', 'N/A'),
-                'timezone': (d.get('timezone') or {}).get('id', 'N/A'),
-                'isp': (d.get('connection') or {}).get('isp', 'N/A'),
-                'org': (d.get('connection') or {}).get('org', 'N/A'),
-                'as': (d.get('connection') or {}).get('asn', 'N/A'),
-                'mobile': d.get('is_mobile', 'N/A'),
-                'proxy': d.get('is_proxy', 'N/A'),
-            }
-            # Detect Cloudflare edge IP
-            asn = d.get('as', '')
-            is_cf_edge = any(cf in asn for cf in _CLOUDFLARE_ASN)
-            if is_cf_edge:
-                warn(f"This IP ({ip}) belongs to {BR}{Y}Cloudflare ({asn}){RS}")
-                warn("GeoIP shows Cloudflare's network location, NOT the origin server.")
-                
-                info("Checking MX records for related infrastructure (not confirmed origins)...")
-                origin_ips = _find_origin_ips_via_mx(hostname)
-                if origin_ips:
-                    ok("Found related MX infrastructure IPs (not confirmed application origins):")
-                    for oip in origin_ips:
-                        print(f"  {BR}{M}◈{RS}  {BR}{R}{oip}{RS}")
-                    d['potential_origin_ips'] = origin_ips
-                else:
-                    warn("Could not discover origin IP via MX records.")
-                print()
+            info("GeoIP providers were unreachable or returned no data — retry in a few seconds.")
+        return {}
 
-            rows = [
-                ('IP Address',   d.get('query',       'N/A')),
-                ('Country',      d.get('country',     'N/A')),
-                ('Region',       d.get('regionName',  'N/A')),
-                ('City',         d.get('city',        'N/A')),
-                ('ZIP Code',     d.get('zip',         'N/A')),
-                ('Latitude',     d.get('lat',         'N/A')),
-                ('Longitude',    d.get('lon',         'N/A')),
-                ('Timezone',     d.get('timezone',    'N/A')),
-                ('ISP',          d.get('isp',         'N/A')),
-                ('Organization', d.get('org',         'N/A')),
-                ('ASN',          asn),
-                ('Mobile?',      d.get('mobile',      'N/A')),
-                ('Proxy/VPN?',   d.get('proxy',       'N/A')),
-            ]
-            for label, val in rows:
-                colour = R if str(val) == 'True' else (Y if is_cf_edge and label == 'ASN' else W)
-                print(f"  {DM}{C}◈{RS}  {BR}{Y}{label:<14}{RS}  {colour}{val}{RS}")
-            return d
-        else:
-            warn(f"GeoIP API returned: {d.get('message', 'unknown error')}")
+    try:
+        # Detect Cloudflare edge IP
+        asn_raw = d.get('as', '')
+        asn = str(asn_raw or '').strip()
+        is_cf_edge = _is_cloudflare_asn(asn_raw)
+        if is_cf_edge:
+            warn(f"This IP ({ip}) belongs to {BR}{Y}Cloudflare ({asn}){RS}")
+            warn("GeoIP shows Cloudflare's network location, NOT the origin server.")
+
+            info("Checking MX records for related infrastructure (not confirmed origins)...")
+            origin_ips = _find_origin_ips_via_mx(hostname)
+            if origin_ips:
+                ok("Found related MX infrastructure IPs (not confirmed application origins):")
+                for oip in origin_ips:
+                    print(f"  {BR}{M}◈{RS}  {BR}{R}{oip}{RS}")
+                d['potential_origin_ips'] = origin_ips
+            else:
+                warn("Could not discover origin IP via MX records.")
+            print()
+
+            # Full origin-IP discovery alongside the Cloudflare edge IP.
+            # Failures here must never kill the Geolocation result — they are
+            # an optional enhancement, so only warn on error.
+            try:
+                from modules.osnit_origin_ip import maybe_show_origin
+                info(f"{BR}{Y}Cloudflare/WAF IP detected — searching for the real origin IP...{RS}")
+                origin_report = maybe_show_origin(hostname)
+                if origin_report:
+                    d['origin_ip_report'] = origin_report
+            except ImportError:
+                pass
+            except Exception as e:
+                warn(f"Origin IP discovery skipped (GeoIP data still valid): {e}")
+
+        rows = [
+            ('IP Address',   d.get('query',       'N/A')),
+            ('Country',      d.get('country',     'N/A')),
+            ('Region',       d.get('regionName',  'N/A')),
+            ('City',         d.get('city',        'N/A')),
+            ('ZIP Code',     d.get('zip',         'N/A')),
+            ('Latitude',     d.get('latitude',    'N/A')),
+            ('Longitude',    d.get('longitude',   'N/A')),
+            ('Timezone',     d.get('timezone',    'N/A')),
+            ('ISP',          d.get('isp',         'N/A')),
+            ('Organization', d.get('org',         'N/A')),
+            ('ASN',          asn),
+            ('Mobile?',      d.get('mobile',      'N/A')),
+            ('Proxy/VPN?',   d.get('proxy',       'N/A')),
+        ]
+        for label, val in rows:
+            colour = R if str(val) == 'True' else (Y if is_cf_edge and label == 'ASN' else W)
+            print(f"  {DM}{C}◈{RS}  {BR}{Y}{label:<14}{RS}  {colour}{val}{RS}")
+        return d
     except Exception as e:
         alert(f"GeoIP lookup failed: {e}")
     return {}

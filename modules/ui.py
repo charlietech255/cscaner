@@ -223,4 +223,8 @@ def print_table(headers: list, rows: list):
     print(sep)
 
 def pause():
+    # Non-interactive runs (pipelines, CI, subprocess, test suite) must not
+    # block forever waiting on input() — just continue silently.
+    if not sys.stdin.isatty():
+        return
     input(f"\n  {DM}{T('press_enter')}{RS}")

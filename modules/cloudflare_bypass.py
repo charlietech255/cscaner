@@ -65,8 +65,17 @@ async def _solve_cloudflare_async(cfg: CloudflareBypassConfig) -> tuple[str, str
     cf_clearance_cookie = None
     user_agent = None
 
+    webgl_config = None
+    if cfg.os:
+        _mapper = {
+            "windows": ("Google Inc. (NVIDIA)", "ANGLE (NVIDIA, NVIDIA GeForce GTX 980 Direct3D11 vs_5_0 ps_5_0), or similar"),
+            "macos":   ("Apple", "Apple M1, or similar"),
+            "linux":   ("Google Inc. (Google)", "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"),
+        }
+        webgl_config = _mapper.get(cfg.os.lower())
+
     camoufox_options: dict = {
-        "webgl_config": ("Apple", "Apple M1, or similar"),
+        "webgl_config": webgl_config,
         "disable_coop": cfg.disable_coop,
         "locale": cfg.locale,
         "block_webrtc": cfg.block_webrtc,

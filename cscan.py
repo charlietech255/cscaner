@@ -324,6 +324,8 @@ async def handle_dns():
     SESSION['results']['dns'] = res
     if res.get('ipv4'):
         SESSION['ip'] = res['ipv4'][0]
+    if res.get('origin_ip'):
+        SESSION['results']['origin_ip'] = res['origin_ip']
     pause()
 
 async def handle_whois():
@@ -354,6 +356,8 @@ async def handle_geoip():
     if not t: return
     res = await _run_sync(geoip_lookup, t)
     SESSION['results']['geoip'] = res
+    if isinstance(res, dict) and res.get('origin_ip_report'):
+        SESSION['results']['origin_ip'] = res['origin_ip_report']
     pause()
 
 async def handle_reverse_dns():
@@ -371,6 +375,11 @@ async def handle_port_common():
     try_nmap = SESSION['stealth']['try_nmap']
     res = await _run_sync(port_scan_common, t, timing=timing, try_nmap=try_nmap)
     SESSION['results']['ports_common'] = res
+    # Origin IP discovery runs inside the port scan when Cloudflare is detected
+    from modules.scanner import get_last_origin_report
+    origin_report = get_last_origin_report()
+    if origin_report:
+        SESSION['results']['origin_ip'] = origin_report
     # Store IP if we got one
     if res and not SESSION['ip']:
         import socket
@@ -390,6 +399,10 @@ async def handle_port_full():
     try_nmap = SESSION['stealth']['try_nmap']
     res = await _run_sync(port_scan_full, t, start, end, timing=timing, try_nmap=try_nmap)
     SESSION['results']['ports_full'] = res
+    from modules.scanner import get_last_origin_report
+    origin_report = get_last_origin_report()
+    if origin_report:
+        SESSION['results']['origin_ip'] = origin_report
     pause()
 
 async def handle_banner_grab():
@@ -403,6 +416,10 @@ async def handle_banner_grab():
         ports = [p['port'] for p in prev_ports if isinstance(p, dict) and 'port' in p]
     res = await _run_sync(banner_grabber, t, ports)
     SESSION['results']['banners'] = res
+    from modules.scanner import get_last_origin_report
+    origin_report = get_last_origin_report()
+    if origin_report:
+        SESSION['results']['origin_ip'] = origin_report
     pause()
 
 async def handle_ssl():

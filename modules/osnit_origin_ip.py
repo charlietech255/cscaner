@@ -524,6 +524,45 @@ def find_origin_ip(
     return report
 
 
+# ── Shared helper for IP-displaying scan modes ─────────────────────────────
+def maybe_show_origin(domain: str, report: Optional[OriginIPReport] = None):
+    """
+    Convenience used by scan modes that display IPs. If `domain` resolves
+    behind Cloudflare (a WAF fronting IP), this runs the full origin-IP
+    discovery and shows the real origin IP alongside the Cloudflare IP the
+    same way origin IPs are displayed.
+
+    Accepts an optional already-computed report to avoid redundant lookups.
+    Returns the OriginIPReport when a WAF/Cloudflare fronting IP was found,
+    otherwise None.
+    """
+    parsed = urlparse(domain if "://" in domain else f"https://{domain}")
+    hostname = parsed.hostname or domain
+
+    # Raw IP targets have no domain to hunt behind — nothing to discover.
+    try:
+        ipaddress.ip_address(hostname)
+        return None
+    except ValueError:
+        pass
+
+    if report is None:
+        # Only run the (potentially slow) discovery when the target actually
+        # resolves behind Cloudflare so regular IP-display modes stay fast.
+        has_cf = False
+        try:
+            has_cf = any(
+                _is_cloudflare_ip(i[4][0])
+                for i in socket.getaddrinfo(hostname, None, socket.AF_INET)
+            )
+        except Exception:
+            has_cf = False
+        if not has_cf:
+            return None
+        report = find_origin_ip(hostname)
+    return report
+
+
 # ── Standalone runner ──────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys

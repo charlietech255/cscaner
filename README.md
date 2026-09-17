@@ -337,8 +337,8 @@ The following modules are available in `modules/`. Some are called by the intera
 
 | Module | Purpose |
 | --- | --- |
-| `recon.py` | DNS records, WHOIS, subdomains, certificate-transparency names, GeoIP, and reverse DNS. |
-| `scanner.py` | Common/full TCP port scans, service banners, and basic TLS certificate inspection. |
+| `recon.py` | DNS records, WHOIS, subdomains, certificate-transparency names, GeoIP, and reverse DNS. When a resolved IP is a Cloudflare/WAF edge IP, it also runs Origin IP Discovery via `osnit_origin_ip.py` and shows the real server IP. |
+| `scanner.py` | Common/full TCP port scans, service banners, and basic TLS certificate inspection. If the target resolves behind Cloudflare it searches for and displays the real origin IP. |
 | `udp_scanner.py` | UDP service probes for selected DNS, SNMP, TFTP, and NTP indicators. Results are best-effort and require confirmation. |
 | `utils.py` | Shared target hostname and IP resolution, including IPv4/IPv6 handling. |
 
@@ -346,7 +346,7 @@ The following modules are available in `modules/`. Some are called by the intera
 
 | Module | Purpose |
 | --- | --- |
-| `web.py` | Sensitive-path checks, response-content inspection, CMS detection, security headers, directory discovery, and local CVE candidate mapping. |
+| `web.py` | Sensitive-path checks, response-content inspection, CMS detection, security headers, directory discovery, and local CVE candidate mapping. When a Cloudflare/WAF fronting IP is detected, WAF detection also finds and shows the real origin IP. |
 | `crawler.py` | Same-origin crawling for pages, forms, query parameters, JS endpoints, technologies, comments, emails, and masked secret indicators. |
 | `active_vuln.py` | Authorized active checks for reflected XSS, SQL injection, SSRF, open redirects, path traversal, command injection, SSTI, and IDOR hints. Findings include evidence and technique metadata. |
 | `path_api_enum.py` | API/path wordlist enumeration, soft-404 filtering, OpenAPI/Swagger route extraction, and safe `OPTIONS`/`GET`/`HEAD` method discovery. Unsafe methods require explicit lower-level opt-in. |

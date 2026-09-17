@@ -740,6 +740,9 @@ def detect_waf(target: str, use_ssl: bool = False) -> str | None:
             for h_key, h_val in headers.items():
                 if sig in h_key or sig in h_val:
                     alert(f"WAF DETECTED: {BR}{M}{waf}{RS}")
+                    # When the WAF is fronting the target, hunt for the real origin IP.
+                    if 'cloudflare' in waf.lower():
+                        _show_waf_origin_ip(target)
                     return waf
     
     # Fallback: check if the domain resolves to a Cloudflare IP
@@ -752,6 +755,7 @@ def detect_waf(target: str, use_ssl: bool = False) -> str | None:
         for ip in ips:
             if _is_cloudflare_ip(ip):
                 alert(f"WAF DETECTED: {BR}{M}Cloudflare (via IP Resolution){RS}")
+                _show_waf_origin_ip(target)
                 return "cloudflare"
     except ImportError:
         pass
@@ -759,6 +763,25 @@ def detect_waf(target: str, use_ssl: bool = False) -> str | None:
         pass
 
     ok("No WAF detected")
+    return None
+
+
+def _show_waf_origin_ip(target: str):
+    """Run origin-IP discovery when a Cloudflare/WAF fronting IP is detected
+    and display the real origin IP alongside the Cloudflare IP."""
+    try:
+        from modules.osnit_origin_ip import maybe_show_origin
+        hostname = _extract_hostname(target)
+        print()
+        info(f"{BR}{Y}Cloudflare/WAF IP detected — searching for the real origin IP...{RS}")
+        report = maybe_show_origin(hostname)
+        if report:
+            from modules.osnit_origin_ip import OriginIPReport
+            return report
+    except ImportError:
+        pass
+    except Exception:
+        pass
     return None
 
 

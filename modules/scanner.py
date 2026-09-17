@@ -106,6 +106,7 @@ def port_scan_common(target: str, timing: str = 'normal', try_nmap: bool = False
     info(f"Target IP     : {BR}{W}{ip}{RS}")
     info(f"Scanning      : {len(COMMON_PORTS)} common ports")
     info(f"Timing profile: {BR}{C}{timing}{RS}\n")
+    maybe_show_origin_ip(_extract_hostname(target))
 
     if try_nmap:
         nmap_res = try_nmap_scan(ip, list(COMMON_PORTS.keys()), timing=timing, syn=False)
@@ -162,6 +163,7 @@ def port_scan_full(target: str, start: int = 1, end: int = 65535, timing: str = 
     total = end - start + 1
     info(f"Scanning      : {total} ports — this may take a while…")
     info(f"Timing profile: {BR}{C}{timing}{RS}\n")
+    maybe_show_origin_ip(_extract_hostname(target))
 
     if try_nmap and total > 1000:
         nmap_res = try_nmap_scan(ip, list(range(start, end + 1)), timing=timing, syn=False)
@@ -210,6 +212,7 @@ def banner_grabber(target: str, ports: list = None) -> dict:
     grab_ports = ports or list(COMMON_PORTS.keys())
     info(f"Target IP     : {BR}{W}{ip}{RS}")
     info(f"Ports to grab : {len(grab_ports)}\n")
+    maybe_show_origin_ip(_extract_hostname(target))
 
     results = {}
     for port in grab_ports:
@@ -312,3 +315,49 @@ def ssl_inspect(target: str, port: int = 443) -> dict:
 def _resolve(target: str) -> str:
     from modules.utils import resolve_host
     return resolve_host(target)
+
+
+def _extract_hostname(target: str) -> str:
+    """Strip protocol and path from a target to get the clean hostname."""
+    from urllib.parse import urlparse
+    if '://' in target:
+        return urlparse(target).hostname or target
+    return target.split('/')[0]
+
+
+def maybe_show_origin_ip(hostname: str):
+    """
+    If the given hostname resolves behind Cloudflare/WAF, run origin-IP
+    discovery (osnit_origin_ip) and display the real server IP alongside the
+    Cloudflare fronting IP. Stores the report so callers can propagate it.
+    """
+    global _last_origin_report
+    _last_origin_report = None
+    import ipaddress
+    try:
+        ipaddress.ip_address(hostname)  # raw IP target — no domain to hunt behind
+        return None
+    except ValueError:
+        pass
+    try:
+        from modules.osnit_origin_ip import _is_cloudflare_ip, maybe_show_origin
+        addrs = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        if any(_is_cloudflare_ip(i[4][0]) for i in addrs):
+            print()
+            info(f"{BR}{Y}Cloudflare/WAF IP detected — searching for the real origin IP...{RS}")
+            report = maybe_show_origin(hostname)
+            _last_origin_report = report
+            return report
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    return None
+
+
+def get_last_origin_report():
+    """Return the most recent OriginIPReport found by maybe_show_origin_ip()."""
+    return _last_origin_report
+
+
+_last_origin_report = None

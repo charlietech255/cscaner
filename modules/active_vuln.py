@@ -105,6 +105,27 @@ def _same_origin(url: str, base_url: str) -> bool:
         return False
 
 
+def _run_batch(jobs, workers: int = 8):
+    """Run a sequence of zero-arg callables concurrently.
+
+    Returns the first non-None result (fast-fail for confirmed findings);
+    tolerant of per-job exceptions. jobs is an iterable of callables.
+    """
+    jobs = list(jobs)
+    if not jobs:
+        return None
+    with ThreadPoolExecutor(max_workers=min(workers, max(1, len(jobs)))) as ex:
+        futs = [ex.submit(j) for j in jobs]
+        for fut in as_completed(futs):
+            try:
+                res = fut.result()
+            except Exception:
+                continue
+            if res:
+                return res
+    return None
+
+
 # ── Load payloads from wordlists (with fallback) ─────────────────────────────
 def _load_payloads(filename: str, fallback: list) -> list:
     path = os.path.join(WORDLISTS_DIR, filename)
@@ -114,6 +135,77 @@ def _load_payloads(filename: str, fallback: list) -> list:
             return lines if lines else fallback
     except Exception:
         return fallback
+
+
+def _normalize_method(method) -> str:
+    """Return 'GET' or 'POST' from any crawler/user-supplied method string."""
+    if not method:
+        return 'GET'
+    m = str(method).strip().upper()
+    return 'POST' if m == 'POST' else 'GET'
+
+
+def _fresh_form_data(form: dict, base_values: dict = None, cookies: dict = None) -> dict:
+    """Build POST data for a form, refreshing CSRF-style hidden tokens.
+
+    Some apps rotate the CSRF token per page load; re-fetching the form's own
+    action page and re-parsing hidden token fields keeps our requests valid so
+    injections aren't silently dropped. Falls back to the supplied base values.
+    """
+    action = form.get('action', '')
+    param_names = form.get('all_param_names', []) or []
+    data = dict(base_values or {})
+    # Pull hidden fields (token-type) fresh from the action page if possible.
+    try:
+        if action:
+            r = _get(action, timeout=8, cookies=cookies)
+            if r and r.text:
+                hidden = re.findall(
+                    r'<input\b[^>]*\btype\s*=\s*["\']hidden["\'][^>]*>', r.text, re.I)
+                for h in hidden:
+                    nm = re.search(r'\bname\s*=\s*["\']([^"\']*)["\']', h, re.I)
+                    val = re.search(r'\bvalue\s*=\s*["\']([^"\']*)["\']', h, re.I)
+                    if nm:
+                        data[nm.group(1)] = val.group(1) if val else ''
+            # ensure every declared param is present
+            for p in param_names:
+                data.setdefault(p, '')
+    except Exception:
+        pass
+    return data
+
+
+def _parse_forms_from_html(url: str, html: str) -> list:
+    """Minimal regex-based HTML <form> parser -> list of form dicts.
+
+    Useful when scanning a bare target URL directly (no crawl data) so that
+    login/input forms are still exercised over POST instead of ignored.
+    """
+    forms = []
+    pattern = re.compile(r'<form\b[^>]*>.*?</form>', re.I | re.S)
+    for raw in pattern.findall(html or ''):
+        tag = re.search(r'<form\b[^>]*>', raw, re.I)
+        if not tag:
+            continue
+        attrs = tag.group(0)
+        action_m = re.search(r'action\s*=\s*["\']([^"\']*)["\']', attrs, re.I)
+        action = action_m.group(1) if action_m else url
+        if not action.startswith(('http://', 'https://')):
+            action = urllib.parse.urljoin(url, action)
+        method_m = re.search(r'method\s*=\s*["\']([^"\']*)["\']', attrs, re.I)
+        method = method_m.group(1) if method_m else 'GET'
+        param_names = re.findall(
+            r'<(?:input|select|textarea)\b[^>]*\bname\s*=\s*["\']([^"\']*)["\']',
+            raw, re.I)
+        param_names = [p for p in param_names if p]
+        if param_names and action:
+            forms.append({
+                'action': action,
+                'method': _normalize_method(method),
+                'param_names': param_names,
+                'all_param_names': param_names,
+            })
+    return forms
 
 
 # ── XSS ──────────────────────────────────────────────────────────────────────
@@ -151,55 +243,55 @@ FALLBACK_PARAMS = ['q', 'search', 'id', 'name', 'query', 'keyword', 'input',
 
 
 def _test_xss(target_url: str, params: list, cookies: dict = None) -> list:
-    """Test XSS on discovered parameters."""
+    """Test XSS on discovered parameters (concurrent)."""
     payloads = _load_payloads('xss_payloads.txt', _XSS_FALLBACK)
     # Use top 50 payloads max for speed
     payloads = payloads[:50]
     findings = []
 
+    def _try(param, payload):
+        r = _get(target_url, params={param: payload}, cookies=cookies)
+        if r and r.text:
+            for pat in XSS_REFLECTION_PATTERNS:
+                if pat.search(r.text):
+                    return {
+                        'type': 'Reflected XSS',
+                        'severity': 'HIGH',
+                        'param': param,
+                        'payload': payload,
+                        'url': r.url,
+                        'evidence': pat.pattern[:60],
+                    }
+        return None
+
     for param in params:
-        for payload in payloads:
-            r = _get(target_url, params={param: payload}, cookies=cookies)
-            if r and r.text:
-                for pat in XSS_REFLECTION_PATTERNS:
-                    if pat.search(r.text):
-                        findings.append({
-                            'type': 'Reflected XSS',
-                            'severity': 'HIGH',
-                            'param': param,
-                            'payload': payload,
-                            'url': r.url,
-                            'evidence': pat.pattern[:60],
-                        })
-                        return findings  # stop on first confirmed hit per endpoint
+        hit = _run_batch((lambda p=param, pl=pl: _try(p, pl)) for pl in payloads)
+        if hit:
+            findings.append(hit)
+            break  # stop on first confirmed hit per endpoint
     return findings
 
 
 def _test_xss_form(form: dict, cookies: dict = None) -> list:
-    """Test XSS on a specific HTML form using POST."""
+    """Test XSS on a specific HTML form using POST (concurrent)."""
     payloads = _load_payloads('xss_payloads.txt', _XSS_FALLBACK)[:30]
     findings = []
     action = form.get('action', '')
-    method = form.get('method', 'GET')
+    method = _normalize_method(form.get('method', 'GET'))
     param_names = form.get('all_param_names', [])
 
     if not param_names or not action:
         return []
 
-    for payload in payloads:
-        data = {}
-        for p in param_names:
-            data[p] = payload  # inject into all fields
-
-        if method == 'POST':
-            r = _post(action, data=data, cookies=cookies)
-        else:
-            r = _get(action, params=data, cookies=cookies)
-
+    def _try(payload):
+        base = {p: payload for p in param_names}  # inject into all fields
+        data = _fresh_form_data(form, base, cookies)
+        r = _post(action, data=data, cookies=cookies) if method == 'POST' \
+            else _get(action, params=data, cookies=cookies)
         if r and r.text:
             for pat in XSS_REFLECTION_PATTERNS:
                 if pat.search(r.text):
-                    findings.append({
+                    return {
                         'type': 'Reflected XSS (Form)',
                         'severity': 'HIGH',
                         'param': ', '.join(param_names[:3]),
@@ -207,8 +299,12 @@ def _test_xss_form(form: dict, cookies: dict = None) -> list:
                         'url': action,
                         'method': method,
                         'evidence': pat.pattern[:60],
-                    })
-                    return findings
+                    }
+        return None
+
+    hit = _run_batch((lambda pl=pl: _try(pl)) for pl in payloads)
+    if hit:
+        findings.append(hit)
     return findings
 
 
@@ -244,39 +340,60 @@ def _test_sqli(target_url: str, params: list, cookies: dict = None) -> list:
     payloads = _load_payloads('sqli_payloads.txt', _SQLI_FALLBACK)[:80]
     findings = []
 
-    # Error-based
+    # Error-based (concurrent across payloads)
     for param in params:
-        for payload in payloads:
-            r = _get(target_url, params={param: payload}, cookies=cookies)
+        def _try(pl, _param=param):
+            r = _get(target_url, params={_param: pl}, cookies=cookies)
             if r and r.text:
                 for pat in SQLI_ERROR_PATTERNS:
                     if pat.search(r.text):
-                        findings.append({
+                        return {
                             'type': 'SQL Injection (Error-Based)',
                             'severity': 'CRITICAL',
-                            'param': param,
-                            'payload': payload,
+                            'param': _param,
+                            'payload': pl,
                             'url': r.url,
                             'evidence': pat.search(r.text).group(0)[:80],
-                        })
-                        return findings
+                        }
+            return None
+        hit = _run_batch((lambda pl=pl: _try(pl)) for pl in payloads)
+        if hit:
+            findings.append(hit)
+            return findings
 
-    # Boolean-based blind (compare response sizes)
+    # Boolean-based blind (compare response sizes against baseline + both conditions)
+    # A benign value establishes a baseline; SQLi is only suspected when BOTH
+    # 1=1 and 1=2 differ from baseline AND from each other in a consistent way.
     for param in params[:5]:
-        r_true = _get(target_url, params={param: "1 AND 1=1"}, cookies=cookies)
-        r_false = _get(target_url, params={param: "1 AND 1=2"}, cookies=cookies)
-        if r_true and r_false:
-            if r_true.status_code == r_false.status_code == 200:
-                size_diff = abs(len(r_true.text) - len(r_false.text))
-                if size_diff > 50 and len(r_true.text) > 100:
-                    findings.append({
-                        'type': 'SQL Injection (Boolean Blind - Possible)',
-                        'severity': 'HIGH',
-                        'param': param,
-                        'payload': '1 AND 1=1 vs 1 AND 1=2',
-                        'url': target_url,
-                        'evidence': f'Response size diff: {size_diff}B (true={len(r_true.text)}B, false={len(r_false.text)}B)',
-                    })
+        try:
+            r_base = _get(target_url, params={param: "1"}, cookies=cookies)
+            r_true = _get(target_url, params={param: "1 AND 1=1"}, cookies=cookies)
+            r_false = _get(target_url, params={param: "1 AND 1=2"}, cookies=cookies)
+        except Exception:
+            continue
+        if not (r_base and r_true and r_false):
+            continue
+        for rr in (r_base, r_true, r_false):
+            if rr.status_code != 200 or not rr.text:
+                break
+        else:
+            cat = str(target_url).split('?')[0]
+            len_base = len(r_base.text)
+            len_true = len(r_true.text)
+            len_false = len(r_false.text)
+            # Both injected variants must clearly diverge from the baseline.
+            d_true = len_true - len_base
+            d_false = len_false - len_base
+            if abs(d_true) > 50 and abs(d_false) > 50 and abs(d_true - d_false) > 30:
+                findings.append({
+                    'type': 'SQL Injection (Boolean Blind - Possible)',
+                    'severity': 'HIGH',
+                    'param': param,
+                    'payload': '1 AND 1=1 vs 1 AND 1=2',
+                    'url': cat,
+                    'evidence': (f'Response sizes — base={len_base}B, 1=1→{len_true}B '
+                                 f'(Δ{d_true:+d}), 1=2→{len_false}B (Δ{d_false:+d})'),
+                })
 
     # Time-based blind (check primary params only — expensive)
     for param in params[:3]:
@@ -305,39 +422,41 @@ def _test_sqli(target_url: str, params: list, cookies: dict = None) -> list:
 
 
 def _test_sqli_form(form: dict, cookies: dict = None) -> list:
-    """Test SQLi on a specific HTML form."""
+    """Test SQLi on a specific HTML form (concurrent across payloads)."""
     payloads = _load_payloads('sqli_payloads.txt', _SQLI_FALLBACK)[:30]
     findings = []
     action = form.get('action', '')
-    method = form.get('method', 'GET')
+    method = _normalize_method(form.get('method', 'GET'))
     param_names = form.get('all_param_names', [])
 
     if not param_names or not action:
         return []
 
-    for payload in payloads:
-        for target_param in param_names:
-            data = {p: 'test' for p in param_names}
-            data[target_param] = payload
+    def _try(args):
+        payload, target_param = args
+        base = {p: 'test' for p in param_names}
+        base[target_param] = payload
+        data = _fresh_form_data(form, base, cookies)
+        r = _post(action, data=data, cookies=cookies) if method == 'POST' \
+            else _get(action, params=data, cookies=cookies)
+        if r and r.text:
+            for pat in SQLI_ERROR_PATTERNS:
+                if pat.search(r.text):
+                    return {
+                        'type': 'SQL Injection (Error-Based via Form)',
+                        'severity': 'CRITICAL',
+                        'param': target_param,
+                        'payload': payload,
+                        'url': action,
+                        'method': method,
+                        'evidence': pat.search(r.text).group(0)[:80],
+                    }
+        return None
 
-            if method == 'POST':
-                r = _post(action, data=data, cookies=cookies)
-            else:
-                r = _get(action, params=data, cookies=cookies)
-
-            if r and r.text:
-                for pat in SQLI_ERROR_PATTERNS:
-                    if pat.search(r.text):
-                        findings.append({
-                            'type': 'SQL Injection (Error-Based via Form)',
-                            'severity': 'CRITICAL',
-                            'param': target_param,
-                            'payload': payload,
-                            'url': action,
-                            'method': method,
-                            'evidence': pat.search(r.text).group(0)[:80],
-                        })
-                        return findings
+    jobs = [(pl, tp) for pl in payloads for tp in param_names]
+    hit = _run_batch((lambda a=a: _try(a)) for a in jobs)
+    if hit:
+        findings.append(hit)
     return findings
 
 
@@ -375,6 +494,55 @@ def scan_sqli_target(target: str, form: dict | None = None, cookies: dict | None
     return {'target': target, 'findings': findings, 'status': 'ok' if findings else 'no_findings'}
 
 
+def discover_forms(target: str, cookies: dict = None) -> list:
+    """Fetch a URL and return the HTML forms found on it (already normalized).
+
+    Each form is resolved to an absolute action URL so it can be POSTed to
+    directly. Returns [] if no forms exist or the page can't be fetched.
+    """
+    base = _build_url(target)
+    probe = _get(base, timeout=TIMEOUT, cookies=cookies)
+    if not probe or not getattr(probe, 'text', None):
+        return []
+    forms = _parse_forms_from_html(base, probe.text)
+    return [f for f in forms if _same_origin(f.get('action', ''), base)]
+
+
+def inject_test_forms(forms: list, include: bool = True, cookies: dict = None) -> dict:
+    """Run injection tests (SQLi + XSS) against discovered form endpoints.
+
+    forms: list of normalized form dicts (from discover_forms). include is kept
+    for signature compatibility; always tests both SQLi and XSS.
+    Returns {'targets': n, 'findings': [...], 'total': n}.
+    """
+    findings = []
+    for f in forms[:15]:
+        try:
+            findings.extend(_test_sqli_form(f, cookies=cookies))
+            findings.extend(_test_xss_form(f, cookies=cookies))
+        except Exception:
+            continue
+    return {'targets': len(forms), 'findings': findings, 'total': len(findings)}
+
+
+def scan_and_inject(target: str, cookies: dict = None) -> dict:
+    """One-shot: fetch a URL, detect its form(s), and injection-test them.
+
+    Convenience wrapper for "enter URL → find the form endpoint → test
+    SQLi/XSS injection" in a single call.
+    """
+    base = _build_url(target)
+    forms = discover_forms(base, cookies=cookies)
+    if not forms:
+        return {'target': base, 'forms': 0, 'findings': [], 'total': 0,
+                'status': 'no_forms'}
+    res = inject_test_forms(forms, cookies=cookies)
+    res['target'] = base
+    res['forms'] = len(forms)
+    res['status'] = 'ok' if res['total'] else 'no_findings'
+    return res
+
+
 # ── Open Redirect ─────────────────────────────────────────────────────────────
 REDIRECT_PAYLOADS = [
     'https://evil.com', '//evil.com', '/\\evil.com',
@@ -392,21 +560,26 @@ def _test_open_redirect(base_url: str, params: list, cookies: dict = None) -> li
     # Combine discovered params with known redirect param names
     test_params = list(set(params + REDIRECT_PARAMS))
 
-    for param in test_params:
-        for payload in REDIRECT_PAYLOADS[:4]:
-            r = _get(base_url, params={param: payload}, allow_redirects=False, cookies=cookies)
-            if r and r.status_code in (301, 302, 303, 307, 308):
-                loc = r.headers.get('Location', '')
-                if 'evil.com' in loc:
-                    findings.append({
-                        'type': 'Open Redirect',
-                        'severity': 'MEDIUM',
-                        'param': param,
-                        'payload': payload,
-                        'location': loc,
-                        'url': r.url,
-                    })
-                    return findings
+    def _try(args):
+        param, payload = args
+        r = _get(base_url, params={param: payload}, allow_redirects=False, cookies=cookies)
+        if r and r.status_code in (301, 302, 303, 307, 308):
+            loc = r.headers.get('Location', '')
+            if 'evil.com' in loc:
+                return {
+                    'type': 'Open Redirect',
+                    'severity': 'MEDIUM',
+                    'param': param,
+                    'payload': payload,
+                    'location': loc,
+                    'url': r.url,
+                }
+        return None
+
+    jobs = [(param, pl) for param in test_params for pl in REDIRECT_PAYLOADS[:4]]
+    hit = _run_batch((lambda a=a: _try(a)) for a in jobs)
+    if hit:
+        findings.append(hit)
     return findings
 
 
@@ -432,19 +605,24 @@ def _test_ssrf(base_url: str, params: list, cookies: dict = None) -> list:
     findings = []
     test_params = list(set(params + SSRF_PARAMS))
 
-    for param in test_params:
-        for payload in SSRF_PAYLOADS[:5]:
-            r = _get(base_url, params={param: payload}, timeout=6, cookies=cookies)
-            if r and r.text and SSRF_EVIDENCE.search(r.text):
-                findings.append({
-                    'type': 'Server-Side Request Forgery (SSRF)',
-                    'severity': 'CRITICAL',
-                    'param': param,
-                    'payload': payload,
-                    'url': r.url,
-                    'evidence': SSRF_EVIDENCE.search(r.text).group(0),
-                })
-                return findings
+    def _try(args):
+        param, payload = args
+        r = _get(base_url, params={param: payload}, timeout=6, cookies=cookies)
+        if r and r.text and SSRF_EVIDENCE.search(r.text):
+            return {
+                'type': 'Server-Side Request Forgery (SSRF)',
+                'severity': 'CRITICAL',
+                'param': param,
+                'payload': payload,
+                'url': r.url,
+                'evidence': SSRF_EVIDENCE.search(r.text).group(0),
+            }
+        return None
+
+    jobs = [(param, pl) for param in test_params for pl in SSRF_PAYLOADS[:5]]
+    hit = _run_batch((lambda a=a: _try(a)) for a in jobs)
+    if hit:
+        findings.append(hit)
     return findings
 
 
@@ -465,19 +643,24 @@ def _test_path_traversal(base_url: str, params: list, cookies: dict = None) -> l
     findings = []
     test_params = list(set(params + PATH_PARAMS))
 
-    for param in test_params:
-        for payload in PATH_TRAVERSAL_PAYLOADS:
-            r = _get(base_url, params={param: payload}, cookies=cookies)
-            if r and r.text and PATH_EVIDENCE.search(r.text):
-                findings.append({
-                    'type': 'Path Traversal (LFI)',
-                    'severity': 'CRITICAL',
-                    'param': param,
-                    'payload': payload,
-                    'url': r.url,
-                    'evidence': PATH_EVIDENCE.search(r.text).group(0),
-                })
-                return findings
+    def _try(args):
+        param, payload = args
+        r = _get(base_url, params={param: payload}, cookies=cookies)
+        if r and r.text and PATH_EVIDENCE.search(r.text):
+            return {
+                'type': 'Path Traversal (LFI)',
+                'severity': 'CRITICAL',
+                'param': param,
+                'payload': payload,
+                'url': r.url,
+                'evidence': PATH_EVIDENCE.search(r.text).group(0),
+            }
+        return None
+
+    jobs = [(param, pl) for param in test_params for pl in PATH_TRAVERSAL_PAYLOADS]
+    hit = _run_batch((lambda a=a: _try(a)) for a in jobs)
+    if hit:
+        findings.append(hit)
     return findings
 
 
@@ -496,19 +679,24 @@ def _test_cmdi(base_url: str, params: list, cookies: dict = None) -> list:
     findings = []
     test_params = list(set(params + CMD_PARAMS))
 
-    for param in test_params:
-        for payload in CMD_PAYLOADS:
-            r = _get(base_url, params={param: payload}, cookies=cookies)
-            if r and r.text and CMD_EVIDENCE.search(r.text):
-                findings.append({
-                    'type': 'Command Injection (RCE)',
-                    'severity': 'CRITICAL',
-                    'param': param,
-                    'payload': payload,
-                    'url': r.url,
-                    'evidence': CMD_EVIDENCE.search(r.text).group(0),
-                })
-                return findings
+    def _try(args):
+        param, payload = args
+        r = _get(base_url, params={param: payload}, cookies=cookies)
+        if r and r.text and CMD_EVIDENCE.search(r.text):
+            return {
+                'type': 'Command Injection (RCE)',
+                'severity': 'CRITICAL',
+                'param': param,
+                'payload': payload,
+                'url': r.url,
+                'evidence': CMD_EVIDENCE.search(r.text).group(0),
+            }
+        return None
+
+    jobs = [(param, pl) for param in test_params for pl in CMD_PAYLOADS]
+    hit = _run_batch((lambda a=a: _try(a)) for a in jobs)
+    if hit:
+        findings.append(hit)
     return findings
 
 
@@ -524,21 +712,27 @@ SSTI_PAYLOADS = [
 
 def _test_ssti(base_url: str, params: list, cookies: dict = None) -> list:
     findings = []
+
+    def _try(args):
+        param, payload, expected = args
+        r = _get(base_url, params={param: payload}, cookies=cookies)
+        if r and r.text and expected in r.text and payload not in r.text:
+            return {
+                'type': 'Server-Side Template Injection (SSTI)',
+                'severity': 'CRITICAL',
+                'param': param,
+                'payload': payload,
+                'url': r.url,
+                'evidence': f'Expected "{expected}" found in response',
+            }
+        return None
+
     for param in params[:10]:
-        for payload, expected in SSTI_PAYLOADS:
-            r = _get(base_url, params={param: payload}, cookies=cookies)
-            if r and r.text and expected in r.text:
-                # Verify it's not just echoing the payload
-                if payload not in r.text:
-                    findings.append({
-                        'type': 'Server-Side Template Injection (SSTI)',
-                        'severity': 'CRITICAL',
-                        'param': param,
-                        'payload': payload,
-                        'url': r.url,
-                        'evidence': f'Expected "{expected}" found in response',
-                    })
-                    return findings
+        jobs = [(param, payload, expected) for payload, expected in SSTI_PAYLOADS]
+        hit = _run_batch((lambda a=a: _try(a)) for a in jobs)
+        if hit:
+            findings.append(hit)
+            return findings
     return findings
 
 
@@ -549,7 +743,7 @@ def _test_idor_hint(base_url: str, params: list, cookies: dict = None) -> list:
     id_params = [p for p in params if any(x in p.lower() for x in
                  ('id', 'uid', 'user_id', 'account', 'order', 'invoice', 'num', 'pid'))]
 
-    for param in id_params[:5]:
+    def _try(param):
         r1 = _get(base_url, params={param: '1'}, cookies=cookies)
         r2 = _get(base_url, params={param: '2'}, cookies=cookies)
         if r1 and r2 and r1.status_code == 200 and r2.status_code == 200:
@@ -558,13 +752,18 @@ def _test_idor_hint(base_url: str, params: list, cookies: dict = None) -> list:
                 size_diff = abs(len(r1.text) - len(r2.text))
                 # Only flag if content meaningfully differs
                 if size_diff < len(r1.text) * 0.9:
-                    findings.append({
+                    return {
                         'type': 'Potential IDOR',
                         'severity': 'MEDIUM',
                         'param': param,
                         'url': base_url,
                         'evidence': f'?{param}=1 ({len(r1.text)}B) vs ?{param}=2 ({len(r2.text)}B) — different content, same endpoint',
-                    })
+                    }
+        return None
+
+    hit = _run_batch((lambda p=p: _try(p)) for p in id_params[:5])
+    if hit:
+        findings.append(hit)
     return findings
 
 
@@ -587,6 +786,7 @@ def active_vuln_scan(target: str, use_ssl: bool = False,
 
     # Determine test targets from crawl data or fallback
     test_targets = []
+    forms = []
     if crawl_data and crawl_data.get('parameters'):
         discovered_params = list(crawl_data['parameters'].keys())
         ok(f"Using {len(discovered_params)} parameters from crawler")
@@ -605,7 +805,7 @@ def active_vuln_scan(target: str, use_ssl: bool = False,
                     test_targets.append({'url': url, 'params': url_params})
 
         # Also add form-based targets
-        forms = crawl_data.get('forms', [])
+        forms = crawl_data.get('forms', []) or []
         if forms:
             ok(f"Using {len(forms)} forms from crawler")
 
@@ -620,16 +820,34 @@ def active_vuln_scan(target: str, use_ssl: bool = False,
     else:
         warn("No crawl data — falling back to parameter guessing (less effective)")
         warn("Run the Web Crawler first for better results!\n")
-        test_targets = [{'url': base, 'params': FALLBACK_PARAMS}]
-        forms = []
-
-    if not test_targets:
-        test_targets = [{'url': base, 'params': FALLBACK_PARAMS}]
-        forms = crawl_data.get('forms', []) if crawl_data else []
+        # Fetch the target page and extract forms ourselves so login/input
+        # forms are exercised with their real POST parameters.
+        probe = _get(base, timeout=TIMEOUT, cookies=cookies)
+        if probe and getattr(probe, 'text', None):
+            forms = _parse_forms_from_html(base, probe.text)
+            if forms:
+                ok(f"Detected {len(forms)} HTML form(s) directly from the target")
+        # Only guess GET params when the URL actually has query parameters —
+        # firing thousands of unrelated GET payloads at a login/static page
+        # is both slow and useless.
+        url_qp = list(urllib.parse.parse_qs(
+            urllib.parse.urlparse(base).query, keep_blank_values=True).keys())
+        if url_qp:
+            test_targets = [{'url': base, 'params': url_qp}]
+        elif forms:
+            info("Target URL has no query parameters — focusing on detected form(s).")
+            test_targets = []
+        else:
+            info("No forms or URL parameters found — using a small guess set.")
+            test_targets = [{'url': base, 'params': FALLBACK_PARAMS[:6]}]
 
     # Cap targets to avoid excessive scanning
+    if not test_targets and not forms:
+        test_targets = [{'url': base, 'params': FALLBACK_PARAMS[:6]}]
     test_targets = test_targets[:30]
-    info(f"Testing       : {len(test_targets)} endpoint(s)\n")
+    info(f"Testing       : {len(test_targets)} endpoint(s)")
+    if forms:
+        info(f"Form testing   : {len(forms)} form(s) over {'/'.join(sorted({f.get('method', 'GET') for f in forms}))}")
 
     test_suite = [
         ('XSS (Reflected)',        _test_xss),
@@ -660,8 +878,7 @@ def active_vuln_scan(target: str, use_ssl: bool = False,
                 pass
 
     # Test forms (POST-based)
-    if crawl_data:
-        forms = crawl_data.get('forms', [])
+    if forms:
         for i, form in enumerate(forms[:15]):
             if not _same_origin(form.get('action', ''), base):
                 continue
@@ -677,7 +894,7 @@ def active_vuln_scan(target: str, use_ssl: bool = False,
 
     if not all_findings:
         ok("No active vulnerabilities detected in this scan round.")
-        if not crawl_data:
+        if not crawl_data and not forms:
             info("Tip: Run the Web Crawler first — it discovers real parameters to test.")
         else:
             info("Note: Custom or encoded parameters may still be vulnerable.")
