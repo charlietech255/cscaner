@@ -136,20 +136,30 @@ fi
 rm -rf "$TMPDIR4"
 
 # ── 6. XSS / SQLi payload lists ─────────────────────────────────────────────
+# NOTE: SecLists reorganised these paths (SQLi now under Databases/SQLi, XSS
+# under XSS/human-friendly). The old paths 404 silently — these are REQUIRED
+# for the injection scanners; without them they fall back to ~10 embedded
+# payloads, so a failed download is treated as an error, not 'optional'.
 echo "  [6/6] Downloading fuzzing payloads..."
-curl -sL "$SECLISTS_BASE/Fuzzing/XSS/XSS-Jhaddix.txt" \
+curl -sL "$SECLISTS_BASE/Fuzzing/XSS/human-friendly/XSS-Jhaddix.txt" \
     -o "$WORDLIST_DIR/xss_payloads.txt" 2>/dev/null
-curl -sL "$SECLISTS_BASE/Fuzzing/SQLi/Generic-SQLi.txt" \
+curl -sL "$SECLISTS_BASE/Fuzzing/Databases/SQLi/Generic-SQLi.txt" \
     -o "$WORDLIST_DIR/sqli_payloads.txt" 2>/dev/null
 
+FAIL=0
 for f in xss_payloads.txt sqli_payloads.txt; do
     if [ -s "$WORDLIST_DIR/$f" ]; then
         LINES=$(wc -l < "$WORDLIST_DIR/$f")
         echo "  [+] $f: $LINES entries"
     else
-        echo "  [!] $f download failed (optional)"
+        echo "  [X] $f DOWNLOAD FAILED — injection scans will run on tiny fallback lists"
+        FAIL=1
     fi
 done
+if [ "$FAIL" -ne 0 ]; then
+    echo "  [!] Re-run this script once your network allows GitHub raw access,"
+    echo "      or place the payload files into $WORDLIST_DIR manually."
+fi
 
 echo ""
 echo "  ╔══════════════════════════════════════════════════════╗"
